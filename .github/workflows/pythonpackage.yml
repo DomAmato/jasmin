@@ -57,7 +57,7 @@ jobs:
       run: |
         pip3 install -r requirements-test.txt
         pip3 install coveralls
-        python3 -m twisted.trial tests
+        trial tests
     - name: Test Doc Build
       run: |
         cd misc/doc
