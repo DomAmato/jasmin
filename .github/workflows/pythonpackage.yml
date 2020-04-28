@@ -55,6 +55,10 @@ jobs:
         LOG_PATH: ./misc
         ROOT_PATH : ./
       run: |
+        touch $LOG_PATH/router.log
+        touch $LOG_PATH/amqp-client.log
+        touch $LOG_PATH/redis-client.log
+        touch $LOG_PATH/default-test-id.log
         pip3 install -r requirements-test.txt
         pip3 install coveralls
         coverage run --source=jasmin -m twisted.trial tests
