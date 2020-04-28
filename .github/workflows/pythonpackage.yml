@@ -7,6 +7,20 @@ on: [push, pull_request]
 
 jobs:
   build:
+    services:
+      rabbitmq:
+        image: rabbitmq:latest
+        ports:
+          - 5672:5672
+      redis:
+        image: redis
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -33,13 +47,14 @@ jobs:
     - name: Test with pytest
       env:
         COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
-        LOG_PATH: .
-        ROOT_PATH : ''
+        REDIS_HOST: localhost
+        REDIS_PORT: 6379
+        CONFIG_PATH: ./misc/config
+        RESOURCE_PATH: ./misc/config/resource/
+        STORE_PATH: ./misc/config/store/
+        LOG_PATH: . ./misc
+        ROOT_PATH : ./
       run: |
-        sudo mkdir -p $ROOT_PATH/etc/jasmin/resource
-        sudo mkdir -p $ROOT_PATH/etc/jasmin/store
-        sudo chmod -R 777 $ROOT_PATH/etc/jasmin/store
-        cp -R misc/config $ROOT_PATH/etc/jasmin
         pip3 install -r requirements-test.txt
         pip3 install coveralls
         coverage run --source=jasmin -m twisted.trial tests
