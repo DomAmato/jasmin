@@ -52,7 +52,7 @@ jobs:
         CONFIG_PATH: ./misc/config
         RESOURCE_PATH: ./misc/config/resource/
         STORE_PATH: ./misc/config/store/
-        LOG_PATH: . ./misc
+        LOG_PATH: ./misc
         ROOT_PATH : ./
       run: |
         pip3 install -r requirements-test.txt
