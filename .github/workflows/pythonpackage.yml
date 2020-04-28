@@ -34,8 +34,8 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        python3 -m pip install --upgrade pip
-        pip3 install -r requirements.txt
+        sudo python3 -m pip install --upgrade pip
+        sudo pip3 install -r requirements.txt
     # - name: Lint
     #   run: |
     #     pip install pylint
@@ -55,8 +55,8 @@ jobs:
         LOG_PATH: ./misc
         ROOT_PATH : ./
       run: |
-        pip3 install -r requirements-test.txt
-        pip3 install coveralls
+        sudo pip3 install -r requirements-test.txt
+        sudo pip3 install coveralls
         sudo python3 -m twisted.trial tests
     - name: Test Doc Build
       run: |
