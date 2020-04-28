@@ -55,12 +55,9 @@ jobs:
         LOG_PATH: ./misc
         ROOT_PATH : ./
       run: |
-        sudo mkdir _trial_temp
-        sudo chmod -R 777 _trial_temp
         pip3 install -r requirements-test.txt
         pip3 install coveralls
-        coverage run --source=jasmin -m twisted.trial tests
-        coveralls
+        python3 -m twisted.trial tests
     - name: Test Doc Build
       run: |
         cd misc/doc
