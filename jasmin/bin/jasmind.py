@@ -10,6 +10,7 @@ from lockfile import FileLock, LockTimeout, AlreadyLocked
 from twisted.cred import portal
 from twisted.cred.checkers import AllowAnonymousAccess, InMemoryUsernamePasswordDatabaseDontUse
 from twisted.internet import reactor, defer
+from twisted.application.internet import TimerService
 from twisted.python import usage
 from twisted.spread import pb
 from twisted.web import server
@@ -23,6 +24,8 @@ from jasmin.protocols.cli.configs import JCliConfig
 from jasmin.protocols.cli.factory import JCliFactory
 from jasmin.protocols.http.configs import HTTPApiConfig
 from jasmin.protocols.http.server import HTTPApi
+from jasmin.protocols.sqs.configs import SQSConfig
+from jasmin.protocols.sqs.connector import SQSConnector
 from jasmin.protocols.smpp.configs import SMPPServerConfig, SMPPServerPBConfig
 from jasmin.protocols.smpp.factory import SMPPServerFactory
 from jasmin.protocols.smpp.pb import SMPPServerPB
@@ -298,6 +301,30 @@ class JasminDaemon:
         """Stop HTTP Api"""
         return self.components['http-api-server'].stopListening()
 
+    def startSQSService(self):
+        """Start SQS"""
+
+        sqsConfigInstance = SQSConfig(self.options['config'])
+
+        # Add interceptor if enabled:
+        if 'interceptor-pb-client' in self.components:
+            interceptorpb_client = self.components['interceptor-pb-client']
+        else:
+            interceptorpb_client = None
+
+        self.components['sqs-connection'] = SQSConnector(
+            self.components['router-pb-factory'],
+            self.components['smppcm-pb-factory'],
+            sqsConfigInstance,
+            interceptorpb_client)
+
+        self.components['sqs-service'] = TimerService(20, self.components['sqs-connection'].retrieveMessages)
+        self.components['sqs-service'].startService()
+
+    def stopSQSService(self):
+        """Stop SQS"""
+        return self.components['sqs-service'].stopService()
+
     def startJCliService(self):
         """Start jCli console server"""
         loadConfigProfileWithCreds = {
@@ -453,6 +480,16 @@ class JasminDaemon:
                 self.log.info("  HTTPApi Started.")
 
         ########################################################
+        if not self.options['disable-sqs']:
+            try:
+                # [optional] Start SQS service
+                self.startSQSService()
+            except Exception as e:
+                self.log.error("  Cannot start SQS service: %s\n%s" % (e, traceback.format_exc()))
+            else:
+                self.log.info("  SQS Service Started.")
+
+        ########################################################
         if not self.options['disable-jcli']:
             try:
                 # [optional] Start JCli server
@@ -474,6 +511,10 @@ class JasminDaemon:
         if 'http-api-server' in self.components:
             yield self.stopHTTPApiService()
             self.log.info("  HTTPApi stopped.")
+
+        if 'sqs-service' in self.components:
+            yield self.stopSQSService()
+            self.log.info("  SQS Service stopped.")
 
         if 'dlr-thrower' in self.components:
             yield self.stopDLRThrowerService()

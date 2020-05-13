@@ -6,7 +6,7 @@ from jasmin.protocols.http.errors import UrlArgsValidationError, CredentialValid
 from jasmin.protocols.validation import AbstractCredentialValidator
 
 
-class UrlArgsValidator:
+class ArgsValidator:
     """Will check for arguments syntax errors"""
 
     def __init__(self, request, fields):  # TODO add if JSON dont do [0]
@@ -54,7 +54,7 @@ class UrlArgsValidator:
         return True
 
 
-class HttpAPICredentialValidator(AbstractCredentialValidator):
+class SQSCredentialValidator(AbstractCredentialValidator):
     """Will check for user MtMessagingCredential"""
 
     def __init__(self, action, user, request, submit_sm=None):
@@ -73,76 +73,62 @@ class HttpAPICredentialValidator(AbstractCredentialValidator):
             and not self.user.mt_credential.getAuthorization('http_long_content')):
             raise CredentialValidationError(
                 'Authorization failed for user [%s] (Long content not authorized).' % self.user)
-        if (b'dlr-level' in self.request.args
+        if ('dlr-level' in self.request.args
             and not self.user.mt_credential.getAuthorization('set_dlr_level')):
             raise CredentialValidationError(
                 'Authorization failed for user [%s] (Setting dlr level not authorized).' % self.user)
-        if (b'dlr-method' in self.request.args
+        if ('dlr-method' in self.request.args
             and not self.user.mt_credential.getAuthorization('http_set_dlr_method')):
             raise CredentialValidationError(
                 'Authorization failed for user [%s] (Setting dlr method not authorized).' % self.user)
-        if (b'from' in self.request.args
+        if ('from' in self.request.args
             and not self.user.mt_credential.getAuthorization('set_source_address')):
             raise CredentialValidationError(
                 'Authorization failed for user [%s] (Setting source address not authorized).' % self.user)
-        if (b'priority' in self.request.args
+        if ('priority' in self.request.args
             and not self.user.mt_credential.getAuthorization('set_priority')):
             raise CredentialValidationError(
                 'Authorization failed for user [%s] (Setting priority not authorized).' % self.user)
-        if (b'validity-period' in self.request.args
+        if ('validity-period' in self.request.args
             and not self.user.mt_credential.getAuthorization('set_validity_period')):
             raise CredentialValidationError(
                 'Authorization failed for user [%s] (Setting validity period not authorized).' % self.user)
-        if (b'hex-content' in self.request.args
+        if ('hex-content' in self.request.args
             and not self.user.mt_credential.getAuthorization('set_hex_content')):
             raise CredentialValidationError(
                 'Authorization failed for user [%s] (Setting hex content not authorized).' % self.user)
-        if (b'sdt' in self.request.args
+        if ('sdt' in self.request.args
             and not self.user.mt_credential.getAuthorization('set_schedule_delivery_time')):
             raise CredentialValidationError(
                 'Authorization failed for user [%s] (Setting schedule delivery time not authorized).' % self.user)
-
-    def _checkBalanceAuthorizations(self):
-        """Balance Authorizations check"""
-
-        if not self.user.mt_credential.getAuthorization('http_balance'):
-            raise CredentialValidationError(
-                'Authorization failed for user [%s] (Cannot check balance).' % self.user)
-
-    def _checkRateAuthorizations(self):
-        """Rate Authorizations check"""
-
-        if not self.user.mt_credential.getAuthorization('http_rate'):
-            raise CredentialValidationError(
-                'Authorization failed for user [%s] (Cannot check rate).' % self.user)
 
     def _checkSendFilters(self):
         """MT Filters check"""
 
         if (self.user.mt_credential.getValueFilter('destination_address') is None or
                 not self.user.mt_credential.getValueFilter('destination_address').match(
-                    self._convert_to_string(b'to'))):
+                    self._convert_to_string('to'))):
             raise CredentialValidationError(
                 'Value filter failed for user [%s] (destination_address filter mismatch).' % self.user)
-        if b'from' in self.request.args and (self.user.mt_credential.getValueFilter('source_address') is None or
+        if 'from' in self.request.args and (self.user.mt_credential.getValueFilter('source_address') is None or
                                                 not self.user.mt_credential.getValueFilter('source_address').match(
-                                                    self._convert_to_string(b'from'))):
+                                                    self._convert_to_string('from'))):
             raise CredentialValidationError(
                 'Value filter failed for user [%s] (source_address filter mismatch).' % self.user)
-        if b'priority' in self.request.args and (self.user.mt_credential.getValueFilter('priority') is None or
+        if 'priority' in self.request.args and (self.user.mt_credential.getValueFilter('priority') is None or
                                                     not self.user.mt_credential.getValueFilter('priority').match(
-                                                        self._convert_to_string(b'priority'))):
+                                                        self._convert_to_string('priority'))):
             raise CredentialValidationError(
                 'Value filter failed for user [%s] (priority filter mismatch).' % self.user)
-        if b'validity-period' in self.request.args and (
+        if 'validity-period' in self.request.args and (
                         self.user.mt_credential.getValueFilter('validity_period') is None or
                     not self.user.mt_credential.getValueFilter('validity_period').match(
-                        self._convert_to_string(b'validity-period'))):
+                        self._convert_to_string('validity-period'))):
             raise CredentialValidationError(
                 'Value filter failed for user [%s] (validity_period filter mismatch).' % self.user)
-        if (b'content' in self.request.args and 
+        if ('content' in self.request.args and 
                 (self.user.mt_credential.getValueFilter('content') is None or
-                not self.user.mt_credential.getValueFilter('content').match(self._convert_to_string(b'content', self.request.args.get(b'coding', [None])[0])))):
+                not self.user.mt_credential.getValueFilter('content').match(self._convert_to_string('content', self.request.args.get('coding', [None])[0])))):
             raise CredentialValidationError(
                 'Value filter failed for user [%s] (content filter mismatch).' % self.user)
 
@@ -159,17 +145,6 @@ class HttpAPICredentialValidator(AbstractCredentialValidator):
     def validate(self):
         """Will validate requests through Authorizations and ValueFilters credential check"""
 
-        if self.action == 'Send':
-            self._checkSendAuthorizations()
-            self._checkSendFilters()
-        elif self.action == 'Rate':
-            self._checkRateAuthorizations()
-        elif self.action == 'Balance':
-            self._checkBalanceAuthorizations()
-        else:
-            raise CredentialValidationError('Unknown action [%s].' % self.action)
-
-    def _convert_to_string(self, arg_name, encoding_type=None):
-        value = self.request.args[arg_name][0]
-        super._convert_to_string(value, encoding_type)
+        self._checkSendAuthorizations()
+        self._checkSendFilters()
         

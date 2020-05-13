@@ -2,13 +2,13 @@ import sys
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from jasmin.protocols.smpp.factory import SMPPClientFactory
-from twisted.application import service
+from twisted.application.service import Service
 from .configs import SMPPClientServiceConfig
 
 LOG_CATEGORY = "jasmin-service-smpp"
 
 
-class SMPPClientService(service.Service):
+class SMPPClientService(Service):
     def __init__(self, SMPPClientConfig, config):
         self.startCounter = 0
         self.stopCounter = 0
@@ -36,14 +36,14 @@ class SMPPClientService(service.Service):
 
     def startService(self):
         self.startCounter += 1
-        service.Service.startService(self)
+        Service.startService(self)
 
         self.log.info('Started service for [%s]', self.SMPPClientConfig.id)
         return self.SMPPClientFactory.connectAndBind().addErrback(self._startServiceErr)
 
     def stopService(self):
         self.stopCounter += 1
-        service.Service.stopService(self)
+        Service.stopService(self)
 
         self.log.info('Stopped service for [%s]', self.SMPPClientConfig.id)
         return self.SMPPClientFactory.disconnectAndDontRetryToConnect()

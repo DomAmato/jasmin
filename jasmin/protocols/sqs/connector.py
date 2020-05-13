@@ -1,66 +1,211 @@
-from datetime import datetime, timedelta
+import sys
+import threading
+import logging
 import re
 import json
 import pickle
+import uuid
+from datetime import datetime, timedelta
+from logging.handlers import TimedRotatingFileHandler
 
+import boto3
 from twisted.internet import reactor, defer
-from twisted.web.resource import Resource
-from twisted.web.server import NOT_DONE_YET
 from smpp.pdu.constants import priority_flag_value_map
 from smpp.pdu.smpp_time import parse
 from smpp.pdu.pdu_types import RegisteredDeliveryReceipt, RegisteredDelivery
 import messaging.sms.gsm0338
 
 from jasmin.routing.Routables import RoutableSubmitSm
-from jasmin.protocols.smpp.configs import SMPPClientConfig
 from jasmin.protocols.smpp.operations import SMPPOperationFactory
-from jasmin.protocols.http.validation import UrlArgsValidator, HttpAPICredentialValidator
-from jasmin.protocols.http.errors import (HttpApiError, UrlArgsValidationError, AuthenticationError, ServerError, RouteNotFoundError, ConnectorNotFoundError,
+from jasmin.protocols.sqs.stats import SQSStatsCollector
+from jasmin.protocols.sqs.errors import (RouteNotFoundError, ConnectorNotFoundError,
                      ChargingError, ThroughputExceededError, InterceptorNotSetError,
                      InterceptorNotConnectedError, InterceptorRunError)
 from jasmin.protocols.errors import ArgsValidationError
+from jasmin.protocols.sqs.validation import ArgsValidator, SQSCredentialValidator
 from jasmin.protocols import hex2bin, authenticate_user, update_submit_sm_pdu
 
-class Send(Resource):
-    isleaf = True
+LOG_CATEGORY = "jasmin-connector-sqs"
 
-    def __init__(self, HTTPApiConfig, RouterPB, SMPPClientManagerPB, stats, log, interceptorpb_client):
-        Resource.__init__(self)
 
+class SQSConnector:
+    def __init__(self, RouterPB, SMPPClientManagerPB, config, interceptor=None):
         self.SMPPClientManagerPB = SMPPClientManagerPB
         self.RouterPB = RouterPB
-        self.stats = stats
-        self.log = log
-        self.interceptorpb_client = interceptorpb_client
-        self.config = HTTPApiConfig
+        self.interceptorpb_client = interceptor
 
+        self.config = config
+        
+        # Setup stats collector
+        self.stats = SQSStatsCollector().get()
+        self.stats.set('created_at', datetime.now())
+
+        # Set up a dedicated logger
+        self.log = logging.getLogger(LOG_CATEGORY)
+        if len(self.log.handlers) != 1:
+            self.log.setLevel(config.log_level)
+            handler = TimedRotatingFileHandler(filename=config.log_file, when=config.log_rotate)
+            formatter = logging.Formatter(config.log_format, config.log_date_format)
+            handler.setFormatter(formatter)
+            self.log.addHandler(handler)
+            self.log.propagate = False
+
+        self.lock = threading.Lock()
+        self.sqs = boto3.client('sqs',
+                                  aws_access_key_id=config.key,
+                                  aws_secret_access_key=config.secret,
+                                  region_name=config.region)
+
+        response = self.sqs.get_queue_url(QueueName=config.in_queue)
+        self.in_queue_url = response['QueueUrl']
+
+        response = self.sqs.get_queue_url(QueueName=config.out_queue)
+        self.out_queue_url = response['QueueUrl']
+        
         # opFactory is initiated with a dummy SMPPClientConfig used for building SubmitSm only
-        self.opFactory = SMPPOperationFactory(long_content_max_parts=HTTPApiConfig.long_content_max_parts,
-                                              long_content_split=HTTPApiConfig.long_content_split)
+        self.opFactory = SMPPOperationFactory(long_content_max_parts=self.config.long_content_max_parts,
+                                              long_content_split=self.config.long_content_split)
+
+    def retrieveMessages(self):
+        """
+        /send request processing
+
+        Note: This method MUST behave exactly like jasmin.protocols.smpp.factory.SMPPServerFactory.submit_sm_event
+        """
+
+        self.lock.acquire()
+        try:
+            request = self.sqs.receive_message(QueueUrl=self.in_queue_url,
+                                                  MaxNumberOfMessages=self.config.max_msg_count)
+        except Exception as e:
+            self.log.error("Error receiving message from queue: %s", str(e))
+        finally:
+            self.lock.release()
+        
+        self.log.debug("Rendering /send response with args: %s from %s", request.args, request.getClientIP())
+
+        self.stats.inc('request_count')
+        self.stats.set('last_request_at', datetime.now())
+
+        try:
+            # Validation (must have almost the same params as /rate service)
+            fields = {'to': {'optional': False, 'pattern': re.compile(r'^\+{0,1}\d+$')},
+                      'from': {'optional': True},
+                      'coding': {'optional': True, 'pattern': re.compile(r'^(0|1|2|3|4|5|6|7|8|9|10|13|14){1}$')},
+                      'username': {'optional': False, 'pattern': re.compile(r'^.{1,16}$')},
+                      'password': {'optional': False, 'pattern': re.compile(r'^.{1,16}$')},
+                      # Priority validation pattern can be validated/filtered further more
+                      # through HttpAPICredentialValidator
+                      'priority': {'optional': True, 'pattern': re.compile(r'^[0-3]$')},
+                      'sdt': {'optional': True,
+                              'pattern': re.compile(r'^\d{2}\d{2}\d{2}\d{2}\d{2}\d{2}\d{1}\d{2}(\+|-|R)$')},
+                      # Validity period validation pattern can be validated/filtered further more
+                      # through HttpAPICredentialValidator
+                      'validity-period': {'optional': True, 'pattern': re.compile(r'^\d+$')},
+                      'dlr': {'optional': False, 'pattern': re.compile(r'^(yes|no)$')},
+                      'dlr-url': {'optional': True, 'pattern': re.compile(r'^(http|https)\://.*$')},
+                      # DLR Level validation pattern can be validated/filtered further more
+                      # through HttpAPICredentialValidator
+                      'dlr-level'   : {'optional': True, 'pattern': re.compile(r'^[1-3]$')},
+                      'dlr-method'  : {'optional': True, 'pattern': re.compile(r'^(get|post)$', re.IGNORECASE)},
+                      'tags'        : {'optional': True, 'pattern': re.compile(r'^([-a-zA-Z0-9,])*$')},
+                      'content'     : {'optional': True},
+                      'hex-content' : {'optional': True},
+                      'custom_tlvs' : {'optional': True}}
+
+            json_data = json.loads(request.body)
+            message = {}
+            message['ReceiptHandle'] = request['ReceiptHandle']
+            for key, value in json_data.items():
+                # Make the values look like they came from form encoding all surrounded by [ ]
+                if isinstance(value, bytes):
+                    value = value.decode()
+
+                if isinstance(key, bytes):
+                    key = key.decode()
+
+                message[key] = [value]
+
+            # If no custom TLVs present, defaujlt to an [] which will be passed down to SubmitSM
+            if 'custom_tlvs' not in message:
+                message['custom_tlvs'] = [[]]
+
+            # Default coding is 0 when not provided
+            if 'coding' not in message:
+                message['coding'] = ['0']
+
+            # Set default for undefined updated_message.arguments
+            if 'dlr-url' in message or 'dlr-level' in message:
+                message['dlr'] = ['yes']
+            if 'dlr' not in message:
+                # Setting DLR updated_message to 'no'
+                message['dlr'] = ['no']
+
+            # Set default values
+            if message['dlr'][0] == 'yes':
+                if 'dlr-level' not in message:
+                    # If DLR is requested and no dlr-level were provided, assume minimum level (1)
+                    message['dlr-level'] = [1]
+                if 'dlr-method' not in message:
+                    # If DLR is requested and no dlr-method were provided, assume default (POST)
+                    message['dlr-method'] = ['POST']
+
+            # DLR method must be uppercase
+            if 'dlr-method' in message:
+                message['dlr-method'][0] = message['dlr-method'][0].upper()
+
+            # Make validation
+            v = ArgsValidator(message, fields)
+            v.validate()
+
+            # Check if have content --OR-- hex-content
+            # @TODO: make this inside UrlArgsValidator !
+            if 'content' not in request.args and 'hex-content' not in request.args:
+                raise ArgsValidationError("content or hex-content not present.")
+            elif 'content' in request.args and 'hex-content' in request.args:
+                raise ArgsValidationError("content and hex-content cannot be used both in same request.")
+
+            # Continue routing in a separate thread
+            reactor.callFromThread(self.route_routable, message=message)
+        except Exception as e:
+            self.log.error("Error: %s", e)
+
+    def sendMessage(self, message):
+        self.log.info('Sending message %s', message)
+        self.lock.acquire()
+        try:
+            self.sqs.send_message(QueueUrl=self.out_queue_url,
+                                    MessageGroupId='1',
+                                    MessageDeduplicationId=str(uuid.uuid4()),
+                                    MessageBody=message)
+        except Exception as e:
+            self.log.error("Error sending message to queue: %s", str(e))
+        finally:
+            self.lock.release()
 
     @defer.inlineCallbacks
-    def route_routable(self, updated_request):
+    def route_routable(self, message):
         try:
             # Do we have a hex-content ?
-            if b'hex-content' not in updated_request.args:
+            if 'hex-content' not in message:
                 # Convert utf8 to GSM 03.38
-                if updated_request.args[b'coding'][0] == b'0':
-                    if isinstance(updated_request.args[b'content'][0], bytes):
-                        short_message = updated_request.args[b'content'][0].decode().encode('gsm0338', 'replace')
+                if message['coding'][0] == '0':
+                    if isinstance(message['content'][0], bytes):
+                        short_message = message['content'][0].decode().encode('gsm0338', 'replace')
                     else:
-                        short_message = updated_request.args[b'content'][0].encode('gsm0338', 'replace')
-                    updated_request.args[b'content'][0] = short_message
+                        short_message = message['content'][0].encode('gsm0338', 'replace')
+                    message['content'][0] = short_message
                 else:
                     # Otherwise forward it as is
-                    short_message = updated_request.args[b'content'][0]
+                    short_message = message['content'][0]
             else:
                 # Otherwise convert hex to bin
-                short_message = hex2bin(updated_request.args[b'hex-content'][0])
+                short_message = hex2bin(message['hex-content'][0])
 
             # Authentication
             user = authenticate_user(
-                updated_request.args[b'username'][0],
-                updated_request.args[b'password'][0],
+                message['username'][0],
+                message['password'][0],
                 self.RouterPB,
                 self.stats,
                 self.log
@@ -73,15 +218,15 @@ class Send(Resource):
 
             # Build SubmitSmPDU
             SubmitSmPDU = self.opFactory.SubmitSM(
-                source_addr=None if b'from' not in updated_request.args else updated_request.args[b'from'][0],
-                destination_addr=updated_request.args[b'to'][0],
+                source_addr=None if 'from' not in message else message['from'][0],
+                destination_addr=message['to'][0],
                 short_message=short_message,
-                data_coding=int(updated_request.args[b'coding'][0]),
-                custom_tlvs=updated_request.args[b'custom_tlvs'][0])
+                data_coding=int(message['coding'][0]),
+                custom_tlvs=message['custom_tlvs'][0])
             self.log.debug("Built base SubmitSmPDU: %s", SubmitSmPDU)
 
             # Make Credential validation
-            v = HttpAPICredentialValidator('Send', user, updated_request, submit_sm=SubmitSmPDU)
+            v = SQSCredentialValidator('Send', user, message, submit_sm=SubmitSmPDU)
             v.validate()
 
             # Update SubmitSmPDU by default values from user MtMessagingCredential
@@ -94,8 +239,8 @@ class Send(Resource):
 
             # Should we tag the routable ?
             tags = []
-            if b'tags' in updated_request.args:
-                tags = updated_request.args[b'tags'][0].split(b',')
+            if 'tags' in message:
+                tags = message['tags'][0].split(',')
                 for tag in tags:
                     if isinstance(tag, bytes):
                         routable.addTag(tag.decode())
@@ -183,27 +328,27 @@ class Send(Resource):
 
             # Set priority
             priority = 0
-            if b'priority' in updated_request.args:
-                priority = int(updated_request.args[b'priority'][0])
+            if 'priority' in message:
+                priority = int(message['priority'][0])
                 param_updates['priority_flag'] = priority_flag_value_map[priority]
             self.log.debug("SubmitSmPDU priority is set to %s", priority)
 
             # Set schedule_delivery_time
-            if b'sdt' in updated_request.args:
-                param_updates['schedule_delivery_time'] = parse(updated_request.args[b'sdt'][0])
+            if 'sdt' in message:
+                param_updates['schedule_delivery_time'] = parse(message['sdt'][0])
                 self.log.debug(
                     "SubmitSmPDU schedule_delivery_time is set to %s (%s)",
                     routable.pdu.params['schedule_delivery_time'],
-                    updated_request.args[b'sdt'][0])
+                    message['sdt'][0])
 
             # Set validity_period
-            if b'validity-period' in updated_request.args:
-                delta = timedelta(minutes=int(updated_request.args[b'validity-period'][0]))
+            if 'validity-period' in message:
+                delta = timedelta(minutes=int(message['validity-period'][0]))
                 param_updates['validity_period'] = datetime.today() + delta
                 self.log.debug(
                     "SubmitSmPDU validity_period is set to %s (+%s minutes)",
                     routable.pdu.params['validity_period'],
-                    updated_request.args[b'validity-period'][0])
+                    message['validity-period'][0])
 
             # Got any updates to apply on pdu(s) ?
             if len(param_updates) > 0:
@@ -220,25 +365,25 @@ class Send(Resource):
             # DLR setting is clearly described in #107
             _last_pdu.params['registered_delivery'] = RegisteredDelivery(
                 RegisteredDeliveryReceipt.NO_SMSC_DELIVERY_RECEIPT_REQUESTED)
-            if updated_request.args[b'dlr'][0] == b'yes':
+            if message['dlr'][0] == 'yes':
                 _last_pdu.params['registered_delivery'] = RegisteredDelivery(
                     RegisteredDeliveryReceipt.SMSC_DELIVERY_RECEIPT_REQUESTED)
                 self.log.debug(
                     "SubmitSmPDU registered_delivery is set to %s",
                     str(_last_pdu.params['registered_delivery']))
 
-                dlr_level = int(updated_request.args[b'dlr-level'][0])
-                if b'dlr-url' in updated_request.args:
-                    dlr_url = updated_request.args[b'dlr-url'][0]
+                dlr_level = int(message['dlr-level'][0])
+                if 'dlr-url' in message:
+                    dlr_url = message['dlr-url'][0]
                 else:
                     dlr_url = None
-                if updated_request.args[b'dlr-level'][0] == b'1':
+                if message['dlr-level'][0] == '1':
                     dlr_level_text = 'SMS-C'
-                elif updated_request.args[b'dlr-level'][0] == b'2':
+                elif message['dlr-level'][0] == '2':
                     dlr_level_text = 'Terminal'
                 else:
                     dlr_level_text = 'All'
-                dlr_method = updated_request.args[b'dlr-method'][0]
+                dlr_method = message['dlr-method'][0]
             else:
                 dlr_url = None
                 dlr_level = 0
@@ -314,174 +459,43 @@ class Send(Resource):
             # Build final response
             if not c.result:
                 self.stats.inc('server_error_count')
-                self.log.error('Failed to send SubmitSmPDU to [cid:%s]', routedConnector.cid)
-                raise ServerError('Cannot send submit_sm, check SMPPClientManagerPB log file for details')
+                raise Exception('Failed to send SubmitSmPDU to [cid:%s]', routedConnector.cid)
             else:
                 self.stats.inc('success_count')
                 self.stats.set('last_success_at', datetime.now())
                 self.log.debug('SubmitSmPDU sent to [cid:%s], result = %s', routedConnector.cid, c.result)
-                response = {'return': c.result, 'status': 200}
-        except (HttpApiError, AuthenticationError, ArgsValidationError) as e:
-            self.log.error("Error: %s", e)
-            if isinstance(e, ArgsValidationError):
-                code = 400
-            elif isinstance(e, AuthenticationError):
-                code = 403
-            else:
-                code = e.code
-            response = {'return': e.message, 'status': code}
         except Exception as e:
             self.log.error("Error: %s", e)
-            response = {'return': "Unknown error: %s" % e, 'status': 500}
             raise
         finally:
-            self.log.debug("Returning %s to %s.", response, updated_request.getClientIP())
-            updated_request.setResponseCode(response['status'])
+            # Do not log text for privacy reasons
+            # Added in #691
+            if self.config.log_privacy:
+                logged_content = '** %s byte content **' % len(short_message)
+            else:
+                if isinstance(short_message, str):
+                    short_message = short_message.encode()
+                logged_content = '%r' % re.sub(r'[^\x20-\x7E]+', '.', short_message)
 
-            # Default return
-            _return = 'Error "%s"' % response['return']
+            self.log.info(
+                'SMS-MT [uid:%s] [cid:%s] [prio:%s] [dlr:%s] [from:%s] [to:%s] [content:%s]',
+                user.uid,
+                routedConnector.cid,
+                priority,
+                dlr_level_text,
+                routable.pdu.params['source_addr'],
+                message['to'][0],
+                logged_content)
 
-            # Success return
-            if response['status'] == 200 and routedConnector is not None:
-                # Do not log text for privacy reasons
-                # Added in #691
-                if self.config.log_privacy:
-                    logged_content = '** %s byte content **' % len(short_message)
-                else:
-                    if isinstance(short_message, str):
-                        short_message = short_message.encode()
-                    logged_content = '%r' % re.sub(rb'[^\x20-\x7E]+', b'.', short_message)
-
-                self.log.info(
-                    'SMS-MT [uid:%s] [cid:%s] [msgid:%s] [prio:%s] [dlr:%s] [from:%s] [to:%s] [content:%s]',
-                    user.uid,
-                    routedConnector.cid,
-                    response['return'],
-                    priority,
-                    dlr_level_text,
-                    routable.pdu.params['source_addr'],
-                    updated_request.args[b'to'][0],
-                    logged_content)
-
-                _return = 'Success "%s"' % response['return']
-
-            updated_request.write(_return.encode())
-            updated_request.finish()
-
-    def render_POST(self, request):
-        """
-        /send request processing
-
-        Note: This method MUST behave exactly like jasmin.protocols.smpp.factory.SMPPServerFactory.submit_sm_event
-        """
-
-        self.log.debug("Rendering /send response with args: %s from %s", request.args, request.getClientIP())
-        request.responseHeaders.addRawHeader(b"content-type", b"text/plain")
-        response = {'return': None, 'status': 200}
-
-        self.stats.inc('request_count')
-        self.stats.set('last_request_at', datetime.now())
-
-        # updated_request will be filled with default values where request will never get modified
-        # updated_request is used for sending the SMS, request is just kept as an original request object
-        updated_request = request
-
-        try:
-            # Validation (must have almost the same params as /rate service)
-            fields = {b'to': {'optional': False, 'pattern': re.compile(rb'^\+{0,1}\d+$')},
-                      b'from': {'optional': True},
-                      b'coding': {'optional': True, 'pattern': re.compile(rb'^(0|1|2|3|4|5|6|7|8|9|10|13|14){1}$')},
-                      b'username': {'optional': False, 'pattern': re.compile(rb'^.{1,16}$')},
-                      b'password': {'optional': False, 'pattern': re.compile(rb'^.{1,16}$')},
-                      # Priority validation pattern can be validated/filtered further more
-                      # through HttpAPICredentialValidator
-                      b'priority': {'optional': True, 'pattern': re.compile(rb'^[0-3]$')},
-                      b'sdt': {'optional': True,
-                              'pattern': re.compile(rb'^\d{2}\d{2}\d{2}\d{2}\d{2}\d{2}\d{1}\d{2}(\+|-|R)$')},
-                      # Validity period validation pattern can be validated/filtered further more
-                      # through HttpAPICredentialValidator
-                      b'validity-period': {'optional': True, 'pattern': re.compile(rb'^\d+$')},
-                      b'dlr': {'optional': False, 'pattern': re.compile(rb'^(yes|no)$')},
-                      b'dlr-url': {'optional': True, 'pattern': re.compile(rb'^(http|https)\://.*$')},
-                      # DLR Level validation pattern can be validated/filtered further more
-                      # through HttpAPICredentialValidator
-                      b'dlr-level'   : {'optional': True, 'pattern': re.compile(rb'^[1-3]$')},
-                      b'dlr-method'  : {'optional': True, 'pattern': re.compile(rb'^(get|post)$', re.IGNORECASE)},
-                      b'tags'        : {'optional': True, 'pattern': re.compile(rb'^([-a-zA-Z0-9,])*$')},
-                      b'content'     : {'optional': True},
-                      b'hex-content' : {'optional': True},
-                      b'custom_tlvs' : {'optional': True}}
-
-            if updated_request.getHeader(b'content-type') == b'application/json':
-                json_body = updated_request.content.read()
-                json_data = json.loads(json_body)
-                for key, value in json_data.items():
-                    # Make the values look like they came from form encoding all surrounded by [ ]
-                    if isinstance(value, str):
-                        value = value.encode()
-
-                    if isinstance(key, str):
-                        key = key.encode()
-
-                    updated_request.args[key] = [value]
-
-            # If no custom TLVs present, defaujlt to an [] which will be passed down to SubmitSM
-            if b'custom_tlvs' not in updated_request.args:
-                updated_request.args[b'custom_tlvs'] = [[]]
-
-            # Default coding is 0 when not provided
-            if b'coding' not in updated_request.args:
-                updated_request.args[b'coding'] = [b'0']
-
-            # Set default for undefined updated_request.arguments
-            if b'dlr-url' in updated_request.args or b'dlr-level' in updated_request.args:
-                updated_request.args[b'dlr'] = [b'yes']
-            if b'dlr' not in updated_request.args:
-                # Setting DLR updated_request to 'no'
-                updated_request.args[b'dlr'] = [b'no']
-
-            # Set default values
-            if updated_request.args[b'dlr'][0] == b'yes':
-                if b'dlr-level' not in updated_request.args:
-                    # If DLR is requested and no dlr-level were provided, assume minimum level (1)
-                    updated_request.args[b'dlr-level'] = [1]
-                if b'dlr-method' not in updated_request.args:
-                    # If DLR is requested and no dlr-method were provided, assume default (POST)
-                    updated_request.args[b'dlr-method'] = [b'POST']
-
-            # DLR method must be uppercase
-            if b'dlr-method' in updated_request.args:
-                updated_request.args[b'dlr-method'][0] = updated_request.args[b'dlr-method'][0].upper()
-
-            # Make validation
-            v = UrlArgsValidator(updated_request, fields)
-            v.validate()
-
-            # Check if have content --OR-- hex-content
-            # @TODO: make this inside UrlArgsValidator !
-            if b'content' not in request.args and b'hex-content' not in request.args:
-                raise UrlArgsValidationError("content or hex-content not present.")
-            elif b'content' in request.args and b'hex-content' in request.args:
-                raise UrlArgsValidationError("content and hex-content cannot be used both in same request.")
-
-            # Continue routing in a separate thread
-            reactor.callFromThread(self.route_routable, updated_request=updated_request)
-        except HttpApiError as e:
-            self.log.error("Error: %s", e)
-            response = {'return': e.message, 'status': e.code}
-
-            self.log.debug("Returning %s to %s.", response, updated_request.getClientIP())
-            updated_request.setResponseCode(response['status'])
-
-            return b'Error "%s"' % (response['return'] if isinstance(response['return'], bytes) else response['return'].encode())
-        except Exception as e:
-            self.log.error("Error: %s", e)
-            response = {'return': "Unknown error: %s" % e, 'status': 500}
-
-            self.log.debug("Returning %s to %s.", response, updated_request.getClientIP())
-            updated_request.setResponseCode(response['status'])
-
-            return b'Error "%s"' % response['return'].encode()
-        else:
-            return NOT_DONE_YET
-
+            self.lock.acquire()
+            if 'ReceiptHandle' not in message:
+                self.log.error("Cannot delete message without ReceiptHandle")
+                raise Exception("Cannot delete message without ReceiptHandle")
+            try:
+                self.sqs.delete_message(QueueUrl=self.in_queue_url,
+                                        ReceiptHandle=message['ReceiptHandle'])
+            except Exception as e:
+                self.log.error("Error deleting message from queue. %s", str(e))
+            finally:
+                self.lock.release()
+        
