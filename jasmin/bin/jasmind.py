@@ -10,7 +10,7 @@ from lockfile import FileLock, LockTimeout, AlreadyLocked
 from twisted.cred import portal
 from twisted.cred.checkers import AllowAnonymousAccess, InMemoryUsernamePasswordDatabaseDontUse
 from twisted.internet import reactor, defer
-from twisted.application.internet import TimerService
+from twisted.internet.task import LoopingCall
 from twisted.python import usage
 from twisted.spread import pb
 from twisted.web import server
@@ -62,7 +62,8 @@ class Options(usage.Options):
         ['enable-dlr-lookup', None, 'Enable DLR Lookup service (not recommended: start the dlrlookupd daemon instead)'],
         # @TODO: deliver-thrower must be executed as a standalone process, just like dlr-thrower
         ['disable-deliver-thrower', None, 'Do not DeliverSm Thrower service'],
-        ['disable-http-api', None, 'Do not HTTP API'],
+        ['disable-http-api', None, 'Disable HTTP API access'],
+        ['disable-sqs', None, 'Disable SQS connections'],
         ['disable-jcli', None, 'Do not jCli console'],
         ['enable-interceptor-client', None, 'Start Interceptor client'],
     ]
@@ -73,7 +74,7 @@ class JasminDaemon:
         self.options = opt
         self.components = {}
         self.log = logging.getLogger(LOG_CATEGORY)
-        self.log.setLevel(logging.INFO)
+        self.log.setLevel(logging.DEBUG)
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter('%(asctime)s %(levelname)-8s %(process)d %(message)s', '%Y-%m-%d %H:%M:%S')
         handler.setFormatter(formatter)
@@ -304,26 +305,30 @@ class JasminDaemon:
     def startSQSService(self):
         """Start SQS"""
 
+        self.log.info('Starting SQS')
         sqsConfigInstance = SQSConfig(self.options['config'])
 
+        self.log.info('Loaded Config')
         # Add interceptor if enabled:
         if 'interceptor-pb-client' in self.components:
             interceptorpb_client = self.components['interceptor-pb-client']
         else:
             interceptorpb_client = None
 
+        self.log.info('Creating Connector')
         self.components['sqs-connection'] = SQSConnector(
             self.components['router-pb-factory'],
             self.components['smppcm-pb-factory'],
             sqsConfigInstance,
             interceptorpb_client)
 
-        self.components['sqs-service'] = TimerService(20, self.components['sqs-connection'].retrieveMessages)
-        self.components['sqs-service'].startService()
+        self.log.info('Starting Timer')
+        self.components['sqs-service'] = LoopingCall( self.components['sqs-connection'].retrieveMessages)
+        return self.components['sqs-service'].start(1)
 
     def stopSQSService(self):
         """Stop SQS"""
-        return self.components['sqs-service'].stopService()
+        return self.components['sqs-service'].stop()
 
     def startJCliService(self):
         """Start jCli console server"""
@@ -482,8 +487,9 @@ class JasminDaemon:
         ########################################################
         if not self.options['disable-sqs']:
             try:
+                self.log.info('Starting SQS')
                 # [optional] Start SQS service
-                self.startSQSService()
+                yield self.startSQSService()
             except Exception as e:
                 self.log.error("  Cannot start SQS service: %s\n%s" % (e, traceback.format_exc()))
             else:

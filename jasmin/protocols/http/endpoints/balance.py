@@ -6,7 +6,7 @@ from twisted.web.resource import Resource
 
 from jasmin.protocols.http.validation import UrlArgsValidator, HttpAPICredentialValidator
 from jasmin.protocols.http.errors import HttpApiError
-from jasmin.protocols.http.endpoints import authenticate_user
+from jasmin.protocols import authenticate_user
 
 class Balance(Resource):
     isleaf = True

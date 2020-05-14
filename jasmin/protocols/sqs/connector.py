@@ -44,13 +44,15 @@ class SQSConnector:
         self.log = logging.getLogger(LOG_CATEGORY)
         if len(self.log.handlers) != 1:
             self.log.setLevel(config.log_level)
-            handler = TimedRotatingFileHandler(filename=config.log_file, when=config.log_rotate)
+            if 'stdout' in self.config.log_file:
+                handler = logging.StreamHandler(sys.stdout)
+            else:
+                handler = TimedRotatingFileHandler(filename=config.log_file, when=config.log_rotate)
             formatter = logging.Formatter(config.log_format, config.log_date_format)
             handler.setFormatter(formatter)
             self.log.addHandler(handler)
             self.log.propagate = False
 
-        self.lock = threading.Lock()
         self.sqs = boto3.client('sqs',
                                   aws_access_key_id=config.key,
                                   aws_secret_access_key=config.secret,
@@ -59,8 +61,9 @@ class SQSConnector:
         response = self.sqs.get_queue_url(QueueName=config.in_queue)
         self.in_queue_url = response['QueueUrl']
 
-        response = self.sqs.get_queue_url(QueueName=config.out_queue)
-        self.out_queue_url = response['QueueUrl']
+        if config.out_queue:
+            response = self.sqs.get_queue_url(QueueName=config.out_queue)
+            self.out_queue_url = response['QueueUrl']
         
         # opFactory is initiated with a dummy SMPPClientConfig used for building SubmitSm only
         self.opFactory = SMPPOperationFactory(long_content_max_parts=self.config.long_content_max_parts,
@@ -73,16 +76,16 @@ class SQSConnector:
         Note: This method MUST behave exactly like jasmin.protocols.smpp.factory.SMPPServerFactory.submit_sm_event
         """
 
-        self.lock.acquire()
         try:
-            request = self.sqs.receive_message(QueueUrl=self.in_queue_url,
-                                                  MaxNumberOfMessages=self.config.max_msg_count)
+            request = self.sqs.receive_message(QueueUrl=self.in_queue_url)
         except Exception as e:
             self.log.error("Error receiving message from queue: %s", str(e))
-        finally:
-            self.lock.release()
-        
-        self.log.debug("Rendering /send response with args: %s from %s", request.args, request.getClientIP())
+            return
+        if 'Messages' not in request:
+            # There are no messages
+            return
+
+        self.log.debug("processing send request: %s", request['Messages'][0])
 
         self.stats.inc('request_count')
         self.stats.set('last_request_at', datetime.now())
@@ -113,7 +116,7 @@ class SQSConnector:
                       'hex-content' : {'optional': True},
                       'custom_tlvs' : {'optional': True}}
 
-            json_data = json.loads(request.body)
+            json_data = json.loads(request['Messages'][0].body)
             message = {}
             message['ReceiptHandle'] = request['ReceiptHandle']
             for key, value in json_data.items():
@@ -171,17 +174,17 @@ class SQSConnector:
             self.log.error("Error: %s", e)
 
     def sendMessage(self, message):
-        self.log.info('Sending message %s', message)
-        self.lock.acquire()
-        try:
-            self.sqs.send_message(QueueUrl=self.out_queue_url,
-                                    MessageGroupId='1',
-                                    MessageDeduplicationId=str(uuid.uuid4()),
-                                    MessageBody=message)
-        except Exception as e:
-            self.log.error("Error sending message to queue: %s", str(e))
-        finally:
-            self.lock.release()
+        if self.out_queue_url:
+            self.log.info('Sending message %s', message)
+            try:
+                self.sqs.send_message(QueueUrl=self.out_queue_url,
+                                        MessageGroupId='1',
+                                        MessageDeduplicationId=str(uuid.uuid4()),
+                                        MessageBody=message)
+            except Exception as e:
+                self.log.error("Error sending message to queue: %s", str(e))
+        else:
+            self.log.error('Outbound queue is not configured')
 
     @defer.inlineCallbacks
     def route_routable(self, message):
@@ -487,7 +490,6 @@ class SQSConnector:
                 message['to'][0],
                 logged_content)
 
-            self.lock.acquire()
             if 'ReceiptHandle' not in message:
                 self.log.error("Cannot delete message without ReceiptHandle")
                 raise Exception("Cannot delete message without ReceiptHandle")
@@ -496,6 +498,4 @@ class SQSConnector:
                                         ReceiptHandle=message['ReceiptHandle'])
             except Exception as e:
                 self.log.error("Error deleting message from queue. %s", str(e))
-            finally:
-                self.lock.release()
         

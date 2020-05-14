@@ -13,7 +13,7 @@ from jasmin.protocols.smpp.operations import SMPPOperationFactory
 from jasmin.protocols.http.errors import UrlArgsValidationError
 from jasmin.protocols.http.validation import UrlArgsValidator, HttpAPICredentialValidator
 from jasmin.protocols.http.errors import HttpApiError, AuthenticationError, InterceptorNotSetError, InterceptorNotConnectedError, InterceptorRunError, RouteNotFoundError
-from jasmin.protocols.http.endpoints import hex2bin, authenticate_user
+from jasmin.protocols import hex2bin, authenticate_user
 
 class Rate(Resource):
     isleaf = True
