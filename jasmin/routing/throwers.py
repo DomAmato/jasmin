@@ -831,13 +831,23 @@ class DLRThrower(Thrower):
             args['text'] = message.content.properties['headers']['text']
 
         try:
-            # Throw the message to http endpoint
-            SQS().get().sendMessage(json.dumps(args))
+            dec_dict = {}
+            for key, value in args.items():
+                if isinstance(value, bytes):
+                    if key == 'coding':
+                        value = int.from_bytes(value, byteorder='big')
+                    else:
+                        value = value.decode()
+                if isinstance(value, datetime):
+                    value = value.strftime("%m/%d/%Y, %H:%M:%S")
+                dec_dict[key] = value
+
+            SQS().get().sendMessage(json.dumps(dec_dict))
 
             # Everything is okay ? then:
             yield self.ackMessage(message)
         except Exception as e:
-            self.log.error('Throwing HTTP/DLR [msgid:%s] to (%s): %r.', msgid, baseurl, e)
+            self.log.error('Throwing SQS/DLR [msgid:%s] to (%s): %r.', msgid, baseurl, e)
 
             if self.getThrowingRetrials(message) <= self.config.max_retries:
                 self.log.debug('Message try-count is %s [msgid:%s]: requeuing',
@@ -856,8 +866,9 @@ class DLRThrower(Thrower):
             yield self.http_dlr_callback(message)
         elif message.routing_key == 'dlr_thrower.smpps':
             yield self.smpp_dlr_callback(message)
-        elif message.routing_key == 'dlr_thrower.sqs':
-            yield self.sqs_dlr_callback(message)
+        # DLR part not ready yet
+        # elif message.routing_key == 'dlr_thrower.sqs':
+        #     yield self.sqs_dlr_callback(message)
         else:
             self.log.error('Unknown routing_key in dlr_throwing_callback: %s', message.routing_key)
             yield self.rejectMessage(message)
