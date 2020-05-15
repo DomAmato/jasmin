@@ -171,5 +171,5 @@ class HttpAPICredentialValidator(AbstractCredentialValidator):
 
     def _convert_to_string(self, arg_name, encoding_type=None):
         value = self.request.args[arg_name][0]
-        super()._convert_to_string(value, encoding_type)
+        return super()._convert_to_string(value, encoding_type)
         

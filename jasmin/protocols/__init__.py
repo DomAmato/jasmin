@@ -3,6 +3,7 @@
 
 """Jasmin SMS Gateway by Jookies LTD <jasmin@jookies.net>"""
 import binascii
+from jasmin.protocols.smpp.configs import SMPPClientConfig
 from jasmin.protocols.errors import ArgsValidationError, AuthenticationError
 
 def hex2bin(hex_content):

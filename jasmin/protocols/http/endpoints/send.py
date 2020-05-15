@@ -12,7 +12,6 @@ from smpp.pdu.pdu_types import RegisteredDeliveryReceipt, RegisteredDelivery
 import messaging.sms.gsm0338
 
 from jasmin.routing.Routables import RoutableSubmitSm
-from jasmin.protocols.smpp.configs import SMPPClientConfig
 from jasmin.protocols.smpp.operations import SMPPOperationFactory
 from jasmin.protocols.http.validation import UrlArgsValidator, HttpAPICredentialValidator
 from jasmin.protocols.http.errors import (HttpApiError, UrlArgsValidationError, ServerError, RouteNotFoundError, ConnectorNotFoundError,
