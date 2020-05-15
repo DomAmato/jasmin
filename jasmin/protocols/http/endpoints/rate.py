@@ -12,7 +12,8 @@ from jasmin.routing.Routables import RoutableSubmitSm
 from jasmin.protocols.smpp.operations import SMPPOperationFactory
 from jasmin.protocols.http.errors import UrlArgsValidationError
 from jasmin.protocols.http.validation import UrlArgsValidator, HttpAPICredentialValidator
-from jasmin.protocols.http.errors import HttpApiError, AuthenticationError, InterceptorNotSetError, InterceptorNotConnectedError, InterceptorRunError, RouteNotFoundError
+from jasmin.protocols.http.errors import HttpApiError, InterceptorNotSetError, InterceptorNotConnectedError, InterceptorRunError, RouteNotFoundError
+from jasmin.protocols.errors import ArgsValidationError, AuthenticationError
 from jasmin.protocols import hex2bin, authenticate_user
 
 class Rate(Resource):
@@ -151,9 +152,17 @@ class Rate(Resource):
                     'unit_rate': bill.getTotalAmounts(),
                     'submit_sm_count': submit_sm_count},
                 'status': 200}
-        except HttpApiError as e:
+        except (HttpApiError, AuthenticationError, ArgsValidationError) as e:
             self.log.error("Error: %s", e)
-            response = {'return': e.message, 'status': e.code}
+            msg = str(e)
+            if isinstance(e, ArgsValidationError):
+                code = 400
+            elif isinstance(e, AuthenticationError):
+                code = 403
+            else:
+                code = e.code
+                msg = e.message
+            response = {'return': msg, 'status': code}
         except Exception as e:
             self.log.error("Error: %s", e)
             response = {'return': "Unknown error: %s" % e, 'status': 500}
@@ -225,9 +234,17 @@ class Rate(Resource):
 
             # Continue routing in a separate thread
             reactor.callFromThread(self.route_routable, request=request)
-        except HttpApiError as e:
+        except (HttpApiError, AuthenticationError, ArgsValidationError) as e:
             self.log.error("Error: %s", e)
-            response = {'return': e.message, 'status': e.code}
+            msg = str(e)
+            if isinstance(e, ArgsValidationError):
+                code = 400
+            elif isinstance(e, AuthenticationError):
+                code = 403
+            else:
+                code = e.code
+                msg = e.message
+            response = {'return': msg, 'status': code}
 
             self.log.debug("Returning %s to %s.", response, request.getClientIP())
 

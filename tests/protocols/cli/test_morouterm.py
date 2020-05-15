@@ -355,7 +355,7 @@ class MoRouteTypingTestCases(MxRouterTestCases):
         yield self._test(r'jcli : ', commands)
 
     @defer.inlineCallbacks
-    def test_add_StaticMORoute_smpps(self):
+    def test_add_StaticMORoute_sqs(self):
         rorder = '10'
         rtype = 'StaticMORoute'
         cid = 'sqs1'

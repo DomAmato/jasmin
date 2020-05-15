@@ -15,10 +15,10 @@ from jasmin.routing.Routables import RoutableSubmitSm
 from jasmin.protocols.smpp.configs import SMPPClientConfig
 from jasmin.protocols.smpp.operations import SMPPOperationFactory
 from jasmin.protocols.http.validation import UrlArgsValidator, HttpAPICredentialValidator
-from jasmin.protocols.http.errors import (HttpApiError, UrlArgsValidationError, AuthenticationError, ServerError, RouteNotFoundError, ConnectorNotFoundError,
+from jasmin.protocols.http.errors import (HttpApiError, UrlArgsValidationError, ServerError, RouteNotFoundError, ConnectorNotFoundError,
                      ChargingError, ThroughputExceededError, InterceptorNotSetError,
                      InterceptorNotConnectedError, InterceptorRunError)
-from jasmin.protocols.errors import ArgsValidationError
+from jasmin.protocols.errors import ArgsValidationError, AuthenticationError
 from jasmin.protocols import hex2bin, authenticate_user, update_submit_sm_pdu
 
 class Send(Resource):
@@ -323,13 +323,15 @@ class Send(Resource):
                 response = {'return': c.result, 'status': 200}
         except (HttpApiError, AuthenticationError, ArgsValidationError) as e:
             self.log.error("Error: %s", e)
+            msg = str(e)
             if isinstance(e, ArgsValidationError):
                 code = 400
             elif isinstance(e, AuthenticationError):
                 code = 403
             else:
                 code = e.code
-            response = {'return': e.message, 'status': code}
+                msg = e.message
+            response = {'return': msg, 'status': code}
         except Exception as e:
             self.log.error("Error: %s", e)
             response = {'return': "Unknown error: %s" % e, 'status': 500}

@@ -29,12 +29,12 @@ class RoutingTable:
         # Ensure connector type is correct for given route
         if self._type == 'mo':
             if not isinstance(route.connector, list):
-                if route.connector._type not in ['http', 'smpps']:
+                if route.connector._type not in ['http', 'smpps', 'sqs']:
                     raise InvalidRoutingTableParameterError("connector '%s' type '%s' is not valid for MO Route" % (
                     route.connector.cid, route.connector._type))
             else:
                 for connector in route.connector:
-                    if connector._type not in ['http', 'smpps']:
+                    if connector._type not in ['http', 'smpps', 'sqs']:
                         raise InvalidRoutingTableParameterError(
                             "connector '%s' type '%s' is not valid for MO Route" % (connector.cid, connector._type))
         elif self._type == 'mt':

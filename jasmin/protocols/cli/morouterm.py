@@ -172,6 +172,8 @@ def MORouteBuild(fCallback):
                             elif ctype == 'smpps':
                                 # Make instance of SmppServerSystemIdConnector
                                 arg.append(SmppServerSystemIdConnector(cid))
+                            elif ctype == 'sqs':
+                                arg.append(SQSConnector())
                             else:
                                 raise NotImplementedError("Not implemented yet !")
                         except Exception as e:

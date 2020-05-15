@@ -6,6 +6,7 @@ from twisted.web.resource import Resource
 
 from jasmin.protocols.http.validation import UrlArgsValidator, HttpAPICredentialValidator
 from jasmin.protocols.http.errors import HttpApiError
+from jasmin.protocols.errors import ArgsValidationError, AuthenticationError
 from jasmin.protocols import authenticate_user
 
 class Balance(Resource):
@@ -67,10 +68,19 @@ class Balance(Resource):
             if sms_count is None:
                 sms_count = 'ND'
             response = {'return': {'balance': balance, 'sms_count': sms_count}, 'status': 200}
-        except HttpApiError as e:
+        except (HttpApiError, AuthenticationError, ArgsValidationError) as e:
             self.log.error("Error: %s", e)
-            response = {'return': e.message, 'status': e.code}
+            msg = str(e)
+            if isinstance(e, ArgsValidationError):
+                code = 400
+            elif isinstance(e, AuthenticationError):
+                code = 403
+            else:
+                code = e.code
+                msg = e.message
+            response = {'return': msg, 'status': code}
         except Exception as e:
+            print(e)
             self.log.error("Error: %s", e)
             response = {'return': "Unknown error: %s" % e, 'status': 500}
         finally:

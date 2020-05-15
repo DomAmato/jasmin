@@ -31,14 +31,6 @@ class ServerError(HttpApiError):
     def __init__(self, message=None):
         HttpApiError.__init__(self, 500, message)
 
-
-class AuthenticationError(HttpApiError):
-    """Raised on authentication error"""
-
-    def __init__(self, message=None):
-        HttpApiError.__init__(self, 403, message)
-
-
 class RouteNotFoundError(HttpApiError):
     """Raised when no routes found for a given Routable"""
 
