@@ -25,6 +25,7 @@ from jasmin.protocols.sqs.errors import (RouteNotFoundError, ConnectorNotFoundEr
 from jasmin.protocols.errors import ArgsValidationError
 from jasmin.protocols.sqs.validation import ArgsValidator, SQSCredentialValidator
 from jasmin.protocols import hex2bin, authenticate_user, update_submit_sm_pdu
+from jasmin.tools.singleton import Singleton
 
 LOG_CATEGORY = "jasmin-connector-sqs"
 

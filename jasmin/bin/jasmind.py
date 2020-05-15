@@ -313,7 +313,7 @@ class JasminDaemon:
         else:
             interceptorpb_client = None
 
-        self.components['sqs-connection'] = SQS.get(
+        self.components['sqs-connection'] = SQS().get(
             self.components['router-pb-factory'],
             self.components['smppcm-pb-factory'],
             sqsConfigInstance,

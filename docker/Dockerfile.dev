@@ -24,11 +24,7 @@ RUN mkdir -p /etc/jasmin/resource \
 
 WORKDIR /usr/jasmin
 
-COPY jasmin jasmin
-COPY requirements.txt .
-COPY requirements-test.txt .
-COPY setup.py .
-COPY README.rst .
+COPY . .
 
 RUN pip install -r requirements.txt
 RUN pip install -r requirements-test.txt
