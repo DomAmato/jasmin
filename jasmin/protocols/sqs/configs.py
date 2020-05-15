@@ -17,7 +17,8 @@ class SQSConfig(ConfigFile):
         ConfigFile.__init__(self, config_file)
 
         self.in_queue = self._get('sqs', 'inbound_queue_name', 'jasmin')
-        self.out_queue = self._get('sqs', 'outbound_queue_name', 'jasmin_out')
+        self.out_queue = self._get('sqs', 'outbound_queue_name', None)
+        self.retry_queue = self._get('sqs', 'retry_queue_name', None)
         self.region = self._get('sqs', 'region', 'us-east-1')
         self.key = self._get('sqs', 'aws_key', None)
         self.secret = self._get('sqs', 'aws_secret', None)

@@ -282,6 +282,29 @@ class MoRouteTypingTestCases(MxRouterTestCases):
         yield self._test(r'jcli : ', commands)
 
     @defer.inlineCallbacks
+    def test_add_DefaultRoute_sqs(self):
+        rorder = '0'
+        rtype = 'DefaultRoute'
+        cid = 'sqs1'
+        typed_cid = 'sqs(%s)' % cid
+        _str_ = '%s to %s NOT RATED' % (rtype, re.escape(typed_cid))
+
+        # Add MORoute
+        extraCommands = [{'command': 'order %s' % rorder},
+                         {'command': 'type %s' % rtype},
+                         {'command': 'connector %s' % typed_cid}]
+        yield self.add_moroute('jcli : ', extraCommands)
+
+        # Make asserts
+        expectedList = ['%s' % _str_]
+        yield self._test('jcli : ', [{'command': 'morouter -s %s' % rorder, 'expect': expectedList}])
+        expectedList = ['#Order Type                    Connector ID\(s\)                                  Filter\(s\)',
+                        '#%s %s %s ' % (rorder.ljust(5), rtype.ljust(23), re.escape(typed_cid).ljust(48)),
+                        'Total MO Routes: 1']
+        commands = [{'command': 'morouter -l', 'expect': expectedList}]
+        yield self._test(r'jcli : ', commands)
+
+    @defer.inlineCallbacks
     def test_add_StaticMORoute_http(self):
         rorder = '10'
         rtype = 'StaticMORoute'
@@ -312,6 +335,31 @@ class MoRouteTypingTestCases(MxRouterTestCases):
         rtype = 'StaticMORoute'
         cid = 'smppuser'
         typed_cid = 'smpps(%s)' % cid
+        fid = 'f1'
+        _str_ = '%s to %s NOT RATED' % (rtype, re.escape(typed_cid))
+
+        # Add MORoute
+        extraCommands = [{'command': 'order %s' % rorder},
+                         {'command': 'type %s' % rtype},
+                         {'command': 'connector %s' % typed_cid},
+                         {'command': 'filters %s' % fid}]
+        yield self.add_moroute('jcli : ', extraCommands)
+
+        # Make asserts
+        expectedList = ['%s' % _str_]
+        yield self._test('jcli : ', [{'command': 'morouter -s %s' % rorder, 'expect': expectedList}])
+        expectedList = ['#Order Type                    Connector ID\(s\)                                  Filter\(s\)',
+                        '#%s %s %s   <T>' % (rorder.ljust(5), rtype.ljust(23), re.escape(typed_cid).ljust(48)),
+                        'Total MO Routes: 1']
+        commands = [{'command': 'morouter -l', 'expect': expectedList}]
+        yield self._test(r'jcli : ', commands)
+
+    @defer.inlineCallbacks
+    def test_add_StaticMORoute_smpps(self):
+        rorder = '10'
+        rtype = 'StaticMORoute'
+        cid = 'sqs1'
+        typed_cid = 'sqs(%s)' % cid
         fid = 'f1'
         _str_ = '%s to %s NOT RATED' % (rtype, re.escape(typed_cid))
 

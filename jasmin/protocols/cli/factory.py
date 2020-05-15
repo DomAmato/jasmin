@@ -115,11 +115,11 @@ class JCliFactory(ServerFactory):
         proto.dataReceived(b'load\r\n')
 
         # Wait some more time till all configurations are loaded
-        pending_load = ['mtrouter', 'morouter', 'filter', 'group', 'smppcc', 'httpcc', 'user']
+        pending_load = [b'mtrouter', b'morouter', b'filter', b'group', b'smppcc', b'httpcc', b'user']
         while True:
             for _pl in pending_load:
-                if re.match(r'.*%s configuration loaded.*' % _pl, tr.value(), re.DOTALL):
-                    self.log.info("%s configuration loaded.", _pl)
+                if re.match(rb'.*%s configuration loaded.*' % _pl, tr.value(), re.DOTALL):
+                    self.log.info(b"%s configuration loaded.", _pl)
                     pending_load.remove(_pl)
 
             if len(pending_load) > 0:

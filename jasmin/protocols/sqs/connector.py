@@ -5,6 +5,7 @@ import re
 import json
 import pickle
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 
@@ -64,6 +65,10 @@ class SQSConnector:
         if config.out_queue:
             response = self.sqs.get_queue_url(QueueName=config.out_queue)
             self.out_queue_url = response['QueueUrl']
+
+        if config.retry_queue:
+            response = self.sqs.get_queue_url(QueueName=config.retry_queue)
+            self.retry_queue_url = response['QueueUrl']
         
         # opFactory is initiated with a dummy SMPPClientConfig used for building SubmitSm only
         self.opFactory = SMPPOperationFactory(long_content_max_parts=self.config.long_content_max_parts,
@@ -75,12 +80,11 @@ class SQSConnector:
 
         Note: This method MUST behave exactly like jasmin.protocols.smpp.factory.SMPPServerFactory.submit_sm_event
         """
-
         try:
             request = self.sqs.receive_message(QueueUrl=self.in_queue_url)
         except Exception as e:
             self.log.error("Error receiving message from queue: %s", str(e))
-            return
+            raise
         if 'Messages' not in request:
             # There are no messages
             return
@@ -116,9 +120,9 @@ class SQSConnector:
                       'hex-content' : {'optional': True},
                       'custom_tlvs' : {'optional': True}}
 
-            json_data = json.loads(request['Messages'][0].body)
+            json_data = json.loads(request['Messages'][0]['Body'])
             message = {}
-            message['ReceiptHandle'] = request['ReceiptHandle']
+            message['ReceiptHandle'] = request['Messages'][0]['ReceiptHandle']
             for key, value in json_data.items():
                 # Make the values look like they came from form encoding all surrounded by [ ]
                 if isinstance(value, bytes):
@@ -163,9 +167,9 @@ class SQSConnector:
 
             # Check if have content --OR-- hex-content
             # @TODO: make this inside UrlArgsValidator !
-            if 'content' not in request.args and 'hex-content' not in request.args:
+            if 'content' not in json_data and 'hex-content' not in json_data:
                 raise ArgsValidationError("content or hex-content not present.")
-            elif 'content' in request.args and 'hex-content' in request.args:
+            elif 'content' in json_data and 'hex-content' in json_data:
                 raise ArgsValidationError("content and hex-content cannot be used both in same request.")
 
             # Continue routing in a separate thread
@@ -188,6 +192,7 @@ class SQSConnector:
 
     @defer.inlineCallbacks
     def route_routable(self, message):
+        original_message = deepcopy(message)
         try:
             # Do we have a hex-content ?
             if 'hex-content' not in message:
@@ -198,6 +203,7 @@ class SQSConnector:
                     else:
                         short_message = message['content'][0].encode('gsm0338', 'replace')
                     message['content'][0] = short_message
+
                 else:
                     # Otherwise forward it as is
                     short_message = message['content'][0]
@@ -467,18 +473,15 @@ class SQSConnector:
                 self.stats.inc('success_count')
                 self.stats.set('last_success_at', datetime.now())
                 self.log.debug('SubmitSmPDU sent to [cid:%s], result = %s', routedConnector.cid, c.result)
-        except Exception as e:
-            self.log.error("Error: %s", e)
-            raise
-        finally:
+
             # Do not log text for privacy reasons
             # Added in #691
             if self.config.log_privacy:
-                logged_content = '** %s byte content **' % len(short_message)
+                logged_content = b'** %d byte content **' % len(short_message)
             else:
                 if isinstance(short_message, str):
                     short_message = short_message.encode()
-                logged_content = '%r' % re.sub(r'[^\x20-\x7E]+', '.', short_message)
+                logged_content = b'%r' % re.sub(rb'[^\x20-\x7E]+', b'.', short_message)
 
             self.log.info(
                 'SMS-MT [uid:%s] [cid:%s] [prio:%s] [dlr:%s] [from:%s] [to:%s] [content:%s]',
@@ -488,14 +491,40 @@ class SQSConnector:
                 dlr_level_text,
                 routable.pdu.params['source_addr'],
                 message['to'][0],
-                logged_content)
-
-            if 'ReceiptHandle' not in message:
+                logged_content.decode())
+        except Exception as e:
+            self.log.error("Error: %s", e)
+            if self.retry_queue_url:
+                retry_message = {}
+                for key, value in original_message.items():
+                    if key != 'ReceiptHandle':
+                        # message was mutated to make everything a list, unwind it and place it back on the queue
+                        retry_message[key] = value[0]
+                self.log.info('Sending message to the retry queue %s', retry_message)
+                try:
+                    self.sqs.send_message(QueueUrl=self.retry_queue_url,
+                                            MessageGroupId='1',
+                                            MessageDeduplicationId=str(uuid.uuid4()),
+                                            MessageBody=json.dumps(retry_message))
+                except Exception as e:
+                    self.log.error("Error sending message to retry queue: %s", str(e))
+        finally:
+            if 'ReceiptHandle' not in original_message:
                 self.log.error("Cannot delete message without ReceiptHandle")
                 raise Exception("Cannot delete message without ReceiptHandle")
             try:
                 self.sqs.delete_message(QueueUrl=self.in_queue_url,
-                                        ReceiptHandle=message['ReceiptHandle'])
+                                        ReceiptHandle=original_message['ReceiptHandle'])
             except Exception as e:
                 self.log.error("Error deleting message from queue. %s", str(e))
         
+class SQS(metaclass=Singleton):
+    """SQS connection holder"""
+    sqs = None
+
+    def get(self, RouterPB=None, SMPPClientManagerPB=None, config=None, interceptor=None):
+        """Return a SQS's stats object or instanciate a new one"""
+        if not self.sqs:
+            self.sqs = SQSConnector(RouterPB, SMPPClientManagerPB, config, interceptor)
+
+        return self.sqs

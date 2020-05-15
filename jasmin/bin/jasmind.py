@@ -25,7 +25,7 @@ from jasmin.protocols.cli.factory import JCliFactory
 from jasmin.protocols.http.configs import HTTPApiConfig
 from jasmin.protocols.http.server import HTTPApi
 from jasmin.protocols.sqs.configs import SQSConfig
-from jasmin.protocols.sqs.connector import SQSConnector
+from jasmin.protocols.sqs.connector import SQS
 from jasmin.protocols.smpp.configs import SMPPServerConfig, SMPPServerPBConfig
 from jasmin.protocols.smpp.factory import SMPPServerFactory
 from jasmin.protocols.smpp.pb import SMPPServerPB
@@ -305,26 +305,22 @@ class JasminDaemon:
     def startSQSService(self):
         """Start SQS"""
 
-        self.log.info('Starting SQS')
         sqsConfigInstance = SQSConfig(self.options['config'])
 
-        self.log.info('Loaded Config')
         # Add interceptor if enabled:
         if 'interceptor-pb-client' in self.components:
             interceptorpb_client = self.components['interceptor-pb-client']
         else:
             interceptorpb_client = None
 
-        self.log.info('Creating Connector')
-        self.components['sqs-connection'] = SQSConnector(
+        self.components['sqs-connection'] = SQS.get(
             self.components['router-pb-factory'],
             self.components['smppcm-pb-factory'],
             sqsConfigInstance,
             interceptorpb_client)
 
-        self.log.info('Starting Timer')
         self.components['sqs-service'] = LoopingCall( self.components['sqs-connection'].retrieveMessages)
-        return self.components['sqs-service'].start(1)
+        self.components['sqs-service'].start(1)
 
     def stopSQSService(self):
         """Stop SQS"""
@@ -489,7 +485,7 @@ class JasminDaemon:
             try:
                 self.log.info('Starting SQS')
                 # [optional] Start SQS service
-                yield self.startSQSService()
+                self.startSQSService()
             except Exception as e:
                 self.log.error("  Cannot start SQS service: %s\n%s" % (e, traceback.format_exc()))
             else:

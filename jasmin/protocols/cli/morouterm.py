@@ -6,7 +6,7 @@ import re
 from jasmin.protocols.cli.filtersm import MOFILTERS
 from jasmin.protocols.cli.managers import PersistableManager, Session
 from jasmin.routing.Routes import (DefaultRoute, StaticMORoute, RandomRoundrobinMORoute, FailoverMORoute)
-from jasmin.routing.jasminApi import SmppServerSystemIdConnector
+from jasmin.routing.jasminApi import SmppServerSystemIdConnector, SQSConnector
 
 MOROUTES = ['DefaultRoute', 'StaticMORoute', 'RandomRoundrobinMORoute', 'FailoverMORoute']
 
@@ -28,7 +28,7 @@ def validate_typed_connector_id(cid):
     exception will be throwed.
     """
 
-    m = re.match(r'(smpps|http)\(([A-Za-z0-9_-]{3,25})\)', cid, re.I)
+    m = re.match(r'(smpps|http|sqs)\(([A-Za-z0-9_-]{3,25})\)', cid, re.I)
     if not m:
         raise InvalidCidSyntax('Invalid syntax for connector id, must be smpps(some_id) or http(some_id).')
 
@@ -145,6 +145,8 @@ def MORouteBuild(fCallback):
                         elif ctype == 'smpps':
                             # Make instance of SmppServerSystemIdConnector
                             arg = SmppServerSystemIdConnector(cid)
+                        elif ctype == 'sqs':
+                            arg = SQSConnector()
                         else:
                             raise NotImplementedError("Not implemented yet !")
                     except Exception as e:

@@ -394,6 +394,12 @@ class SmppServerSystemIdConnector(Connector):
 
         self.system_id = system_id
 
+class SQSConnector(Connector):
+    _type = 'sqs'
+
+    def __init__(self):
+        Connector.__init__(self, 'sqs1')
+
 
 class InterceptorScript(jasminApiGeneric):
     """This is a generic script for message interception"""
