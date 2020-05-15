@@ -25,7 +25,7 @@ from jasmin.protocols.cli.factory import JCliFactory
 from jasmin.protocols.http.configs import HTTPApiConfig
 from jasmin.protocols.http.server import HTTPApi
 from jasmin.protocols.sqs.configs import SQSConfig
-from jasmin.protocols.sqs.connector import SQS
+from jasmin.protocols.sqs.service import SQS
 from jasmin.protocols.smpp.configs import SMPPServerConfig, SMPPServerPBConfig
 from jasmin.protocols.smpp.factory import SMPPServerFactory
 from jasmin.protocols.smpp.pb import SMPPServerPB

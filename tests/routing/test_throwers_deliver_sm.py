@@ -1,24 +1,29 @@
 import binascii
 import copy
+import json
 from datetime import datetime, timedelta
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+import boto3
 from twisted.internet import reactor, defer
 from twisted.trial.unittest import TestCase
 from twisted.web import server
+from smpp.pdu.operations import DeliverSM
+from smpp.pdu.pdu_types import DataCoding, DataCodingDefault
 
 from jasmin.queues.configs import AmqpConfig
 from jasmin.queues.factory import AmqpFactory
 from jasmin.routing.configs import deliverSmThrowerConfig
 from jasmin.routing.content import RoutedDeliverSmContent
-from jasmin.routing.jasminApi import HttpConnector, SmppServerSystemIdConnector
+from jasmin.routing.jasminApi import HttpConnector, SmppServerSystemIdConnector, SQSConnector
 from jasmin.routing.proxies import RouterPBProxy
 from tests.routing.http_server import TimeoutLeafServer, AckServer, NoAckServer, Error404Server
 from tests.routing.test_router import SubmitSmTestCaseTools
 from tests.routing.test_router_smpps import SMPPClientTestCases
 from jasmin.routing.throwers import deliverSmThrower
-from smpp.pdu.operations import DeliverSM
-from smpp.pdu.pdu_types import DataCoding, DataCodingDefault
+from jasmin.protocols.sqs.service import SQS, SQSService
+from jasmin.protocols.sqs.configs import SQSConfig
 
 
 @defer.inlineCallbacks
@@ -463,3 +468,187 @@ class SMPPDeliverSmThrowerTestCases(RouterPBProxy, SMPPClientTestCases, SubmitSm
         self.assertEqual(self.deliverSmThrower.ackMessage.call_count, 0)
         self.assertEqual(self.deliverSmThrower.rejectMessage.call_count, 1)
         self.assertEqual(self.deliverSmThrower.rejectAndRequeueMessage.call_count, 0)
+
+class SQSDeliverSmThrowingTestCases(deliverSmThrowerTestCase):
+    routingKey = 'deliver_sm_thrower.sqs'
+
+    @defer.inlineCallbacks
+    def setUp(self):
+        yield deliverSmThrowerTestCase.setUp(self)
+        with patch('boto3.client') as boto:
+            config = SQSConfig()
+            config.out_queue = 'test'
+            SQS().get(config=config)
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_connector_with_ack(self):
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+
+            routedConnector = SQSConnector()
+            content = 'test_throwing_sqs_connector test content'
+            self.testDeliverSMPdu.params['short_message'] = content
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+
+            callArgs = json.loads(send_message.call_args_list[0][0][0])
+            self.assertEqual(callArgs['content'], self.testDeliverSMPdu.params['short_message'])
+            self.assertEqual(callArgs['from'].encode(), self.testDeliverSMPdu.params['source_addr'])
+            self.assertEqual(callArgs['to'].encode(), self.testDeliverSMPdu.params['destination_addr'])
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_connector_unserializable_data(self):
+        # Because json can't serialize binary data this will fail
+        # need to find a way to test counting retries
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+            routedConnector = SQSConnector()
+            content = {'badcontent': b'123fb124'}
+            self.testDeliverSMPdu.params['short_message'] = content
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            # Wait 12 seconds (timeout is set to 2 seconds in deliverSmThrowerTestCase.setUp(self)
+            yield waitFor(15)
+
+            self.assertEqual(send_message.call_count, 0)
+
+    @defer.inlineCallbacks
+    def test_throwing_validity_parameter(self):
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+
+            routedConnector = SQSConnector()
+            content = b'test_throwing_sqs_connector test content'
+            self.testDeliverSMPdu.params['short_message'] = content
+
+            # Set validity_period in deliver_sm and send it
+            deliver_sm = copy.copy(self.testDeliverSMPdu)
+            vp = datetime.today() + timedelta(minutes=20)
+            deliver_sm.params['validity_period'] = vp
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+
+            callArgs = json.loads(send_message.call_args_list[0][0][0])
+            self.assertTrue('validity' in callArgs)
+            self.assertEqual(vp.strftime("%m/%d/%Y, %H:%M:%S"), callArgs['validity'])
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_utf16(self):
+        """Related to #320
+        Send utf16-be content and check it was throwed while preserving the content as is"""
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+
+            routedConnector = SQSConnector()
+            content = "\x06\x2A\x06\x33\x06\x2A"
+            self.testDeliverSMPdu.params['short_message'] = content
+            self.testDeliverSMPdu.params['data_coding'] = DataCoding(schemeData=DataCodingDefault.UCS2)
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            yield waitFor(1)
+
+            # Assert throwed content is equal to original content
+            callArgs = json.loads(send_message.call_args_list[0][0][0])
+            self.assertEqual(callArgs['content'], content)
+            self.assertEqual(callArgs['coding'], 8)
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_utf8(self):
+        """Related to #320
+        Send utf8 content and check it was throwed while preserving the content as is"""
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+
+            routedConnector = SQSConnector()
+            content = "\xd8\xaa\xd8\xb3\xd8\xaa"
+            self.testDeliverSMPdu.params['short_message'] = content
+            self.testDeliverSMPdu.params['data_coding'] = DataCoding(schemeData=DataCodingDefault.UCS2)
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            yield waitFor(1)
+
+            # Assert throwed content is equal to original content
+            callArgs = json.loads(send_message.call_args_list[0][0][0])
+            self.assertEqual(callArgs['content'], content)
+            self.assertEqual(callArgs['coding'], 8)
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_with_message_payload(self):
+        """Related to #380
+        Will throw via http a pdu having 'message_payload' instead of 'short_message' parameter
+        """
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+
+            routedConnector = SQSConnector()
+            content = 'test_throwing_http_with_message_payload test content'
+            del self.testDeliverSMPdu.params['short_message']
+            self.testDeliverSMPdu.params['message_payload'] = content
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+
+            callArgs = json.loads(send_message.call_args_list[0][0][0])
+            self.assertEqual(callArgs['content'], content)
+            self.assertEqual(callArgs['from'].encode(), self.testDeliverSMPdu.params['source_addr'])
+            self.assertEqual(callArgs['to'].encode(), self.testDeliverSMPdu.params['destination_addr'])
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_without_priority(self):
+        """Related to #380
+        Will throw via http a pdu having no priority_flag parameter
+        """
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+
+            routedConnector = SQSConnector()
+            content = 'test_throwing_http_without_priority test content'
+            del self.testDeliverSMPdu.params['priority_flag']
+            self.testDeliverSMPdu.params['short_message'] = content
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_without_coding(self):
+        """Related to #380
+        Will throw via http a pdu having no data_coding parameter
+        """
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+
+            routedConnector = SQSConnector()
+            content = 'test_throwing_http_without_coding test content'
+            del self.testDeliverSMPdu.params['data_coding']
+            self.testDeliverSMPdu.params['short_message'] = content
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_without_validity(self):
+        """Related to #380
+        Will throw via sqs a pdu having no validity_period parameter
+        """
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+
+            routedConnector = SQSConnector()
+            content = 'test_throwing_http_without_priority test content'
+            del self.testDeliverSMPdu.params['validity_period']
+            self.testDeliverSMPdu.params['short_message'] = content
+            self.publishRoutedDeliverSmContent(self.routingKey, self.testDeliverSMPdu, '1', 'src', routedConnector)
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+

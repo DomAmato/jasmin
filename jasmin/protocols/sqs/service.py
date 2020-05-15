@@ -26,11 +26,12 @@ from jasmin.protocols.errors import ArgsValidationError
 from jasmin.protocols.sqs.validation import ArgsValidator, SQSCredentialValidator
 from jasmin.protocols import hex2bin, authenticate_user, update_submit_sm_pdu
 from jasmin.tools.singleton import Singleton
+from jasmin.protocols.sqs.configs import SQSConfig
 
 LOG_CATEGORY = "jasmin-connector-sqs"
 
 
-class SQSConnector:
+class SQSService:
     def __init__(self, RouterPB, SMPPClientManagerPB, config, interceptor=None):
         self.SMPPClientManagerPB = SMPPClientManagerPB
         self.RouterPB = RouterPB
@@ -179,6 +180,7 @@ class SQSConnector:
             self.log.error("Error: %s", e)
 
     def sendMessage(self, message):
+        print(f'Sending message {message} to {self.config.out_queue}')
         if self.out_queue_url:
             self.log.info('Sending message %s', message)
             try:
@@ -526,6 +528,8 @@ class SQS(metaclass=Singleton):
     def get(self, RouterPB=None, SMPPClientManagerPB=None, config=None, interceptor=None):
         """Return a SQS's stats object or instanciate a new one"""
         if not self.sqs:
-            self.sqs = SQSConnector(RouterPB, SMPPClientManagerPB, config, interceptor)
+            if not config:
+                config = SQSConfig()
+            self.sqs = SQSService(RouterPB, SMPPClientManagerPB, config, interceptor)
 
         return self.sqs

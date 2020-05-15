@@ -2,6 +2,8 @@ import binascii
 import pickle
 import sys
 import logging
+import json
+from datetime import datetime
 import urllib.request, urllib.parse, urllib.error
 from logging.handlers import TimedRotatingFileHandler
 
@@ -19,7 +21,7 @@ from jasmin.protocols.smpp.factory import SMPPServerFactory
 from jasmin.protocols.smpp.operations import SMPPOperationFactory
 from jasmin.protocols.smpp.proxies import SMPPServerPBProxy
 from jasmin.protocols.http.errors import HttpApiError
-
+from jasmin.protocols.sqs.service import SQS
 
 
 class MessageAcknowledgementError(Exception):
@@ -325,9 +327,9 @@ class deliverSmThrower(Thrower):
                              'Accept': 'text/plain'})
                 self.log.info('Throwed message [msgid:%s] to connector (%s %s/%s)[cid:%s] using http to %s.',
                               msgid, route_type, counter, len(dcs), dc.cid, dc.baseurl)
-                
+
                 content = yield text_content(response)
-                
+
                 if response.code >= 400:
                     raise HttpApiError(response.code, content)
 
@@ -490,6 +492,113 @@ class deliverSmThrower(Thrower):
                     self.log.debug('Continue iteration for failover route.')
 
     @defer.inlineCallbacks
+    def sqs_deliver_sm_callback(self, message):
+        msgid = message.content.properties['message-id']
+        route_type = message.content.properties['headers']['route-type']
+        dcs = pickle.loads(message.content.properties['headers']['dst-connectors'])
+        RoutedDeliverSmContent = pickle.loads(message.content.body)
+        self.log.debug('Got one message (msgid:%s) to throw: %s', msgid, RoutedDeliverSmContent)
+        # If any, clear requeuing timer
+        self.clearRequeueTimer(msgid)
+
+        if dcs[0]._type != 'sqs':
+            self.log.error(
+                'Rejecting message [msgid:%s] because destination connector is not sqs (type were %s)',
+                msgid,
+                dcs[0]._type)
+            yield self.rejectMessage(message)
+            defer.returnValue(None)
+
+        # Build mandatory arguments
+        args = {
+            'id': msgid,
+            'from': RoutedDeliverSmContent.params['source_addr'],
+            'to': RoutedDeliverSmContent.params['destination_addr'],
+            'origin-connector': message.content.properties['headers']['src-connector-id']}
+
+        # Content can be short_message or message_payload:
+        if 'short_message' in RoutedDeliverSmContent.params and len(RoutedDeliverSmContent.params['short_message']) > 0:
+            args['content'] = RoutedDeliverSmContent.params['short_message']
+        elif 'message_payload' in RoutedDeliverSmContent.params:
+            args['content'] = RoutedDeliverSmContent.params['message_payload']
+        elif 'short_message' in RoutedDeliverSmContent.params:
+            args['content'] = RoutedDeliverSmContent.params['short_message']
+        else:
+            self.log.error('Cannot find content in pdu (msgid:%s): %s', msgid, RoutedDeliverSmContent)
+            yield self.rejectMessage(message)
+            defer.returnValue(None)
+
+        # Build optional arguments
+        if ('priority_flag' in RoutedDeliverSmContent.params and
+                    RoutedDeliverSmContent.params['priority_flag'] is not None):
+            args['priority'] = priority_flag_name_map[RoutedDeliverSmContent.params['priority_flag'].name]
+        if ('data_coding' in RoutedDeliverSmContent.params and
+                    RoutedDeliverSmContent.params['data_coding'] is not None):
+            args['coding'] = DataCodingEncoder().encode(RoutedDeliverSmContent.params['data_coding'])
+        if ('validity_period' in RoutedDeliverSmContent.params and
+                    RoutedDeliverSmContent.params['validity_period'] is not None):
+            args['validity'] = RoutedDeliverSmContent.params['validity_period']
+
+        counter = 0
+        for dc in dcs:
+            counter += 1
+            self.log.debug('DCS Iteration %s/%s taking [cid:%s] (%s)', counter, len(dcs), dc.cid, dc)
+            last_dc = True
+            if route_type == 'failover' and counter < len(dcs):
+                last_dc = False
+
+            try:
+                # Throw the message to sqs
+                dec_dict = {}
+                for key, value in args.items():
+                    if isinstance(value, bytes):
+                        if key == 'coding':
+                            value = int.from_bytes(value, byteorder='big')
+                        else:
+                            value = value.decode()
+                    if isinstance(value, datetime):
+                        value = value.strftime("%m/%d/%Y, %H:%M:%S")
+                    dec_dict[key] = value
+
+                SQS().get().sendMessage(json.dumps(dec_dict))
+            except Exception as e:
+                self.log.error('Throwing message [msgid:%s] to (%s %s/%s)[cid:%s] (%s), %s: %s.',
+                               msgid, route_type, counter, len(dcs), dc.cid, dc.baseurl, type(e), e)
+
+                if route_type == 'simple':
+                    # Requeue message for later retry
+                    if self.getThrowingRetrials(message) <= self.config.max_retries:
+                        self.log.debug('Message try-count is %s [msgid:%s]: requeuing',
+                                       self.getThrowingRetrials(message), msgid)
+                        yield self.rejectAndRequeueMessage(message)
+                    else:
+                        self.log.warn('Message try-count is %s [msgid:%s]: purged from queue',
+                                      self.getThrowingRetrials(message), msgid)
+                        yield self.rejectMessage(message)
+                elif route_type == 'failover':
+                    # The route has multiple connectors, we will not retry throwing to same connector
+                    if last_dc:
+                        self.log.warn(
+                            'Message [msgid:%s] is no more processed after receiving "%s" error on this fo/connector',
+                            msgid, str(e))
+            else:
+                # Everything is okay ? then:
+                yield self.ackMessage(message)
+
+                if route_type == 'failover':
+                    self.log.debug('Stopping iteration for failover route.')
+                    break
+            finally:
+                if route_type == 'simple':
+                    # There's only one connector for simple routes
+                    break
+                elif route_type == 'failover' and last_dc:
+                    self.log.debug('Break (last dc) iteration for failover route.')
+                    break
+                elif route_type == 'failover' and not last_dc:
+                    self.log.debug('Continue iteration for failover route.')
+
+    @defer.inlineCallbacks
     def deliver_sm_throwing_callback(self, message):
         Thrower.throwing_callback(self, message)
 
@@ -497,6 +606,8 @@ class deliverSmThrower(Thrower):
             yield self.http_deliver_sm_callback(message)
         elif message.routing_key == 'deliver_sm_thrower.smpps':
             yield self.smpp_deliver_sm_callback(message)
+        elif message.routing_key == 'deliver_sm_thrower.sqs':
+            yield self.sqs_deliver_sm_callback(message)
         else:
             self.log.error('Unknown routing_key in deliver_sm_throwing_callback: %s', message.routing_key)
             yield self.rejectMessage(message)
@@ -570,7 +681,7 @@ class DLRThrower(Thrower):
             self.log.info('Throwed DLR [msgid:%s] to %s.', msgid, baseurl)
 
             content = yield text_content(response)
-            
+
             if response.code >= 400:
                 raise HttpApiError(response.code, content)
 
@@ -691,6 +802,53 @@ class DLRThrower(Thrower):
             yield self.ackMessage(message)
 
     @defer.inlineCallbacks
+    def sqs_dlr_callback(self, message):
+        msgid = message.content.properties['message-id']
+        url = message.content.properties['headers']['url']
+        method = message.content.properties['headers']['method']
+        level = message.content.properties['headers']['level']
+        self.log.debug('Got one message (msgid:%s) to throw', msgid)
+
+        # If any, clear requeuing timer
+        self.clearRequeueTimer(msgid)
+
+        # Build mandatory arguments
+        args = {
+            'id': msgid,
+            'level': level,
+            'message_status': message.content.properties['headers']['message_status'],
+            'connector': message.content.properties['headers']['connector']
+        }
+
+        # Level 2 extra args
+        if level in [2, 3]:
+            args['id_smsc'] = message.content.properties['headers']['id_smsc']
+            args['sub'] = message.content.properties['headers']['sub']
+            args['dlvrd'] = message.content.properties['headers']['dlvrd']
+            args['subdate'] = message.content.properties['headers']['subdate']
+            args['donedate'] = message.content.properties['headers']['donedate']
+            args['err'] = message.content.properties['headers']['err']
+            args['text'] = message.content.properties['headers']['text']
+
+        try:
+            # Throw the message to http endpoint
+            SQS().get().sendMessage(json.dumps(args))
+
+            # Everything is okay ? then:
+            yield self.ackMessage(message)
+        except Exception as e:
+            self.log.error('Throwing HTTP/DLR [msgid:%s] to (%s): %r.', msgid, baseurl, e)
+
+            if self.getThrowingRetrials(message) <= self.config.max_retries:
+                self.log.debug('Message try-count is %s [msgid:%s]: requeuing',
+                                self.getThrowingRetrials(message), msgid)
+                yield self.rejectAndRequeueMessage(message)
+            else:
+                self.log.warn('Message try-count is %s [msgid:%s]: purged from queue',
+                                self.getThrowingRetrials(message), msgid)
+                yield self.rejectMessage(message)
+
+    @defer.inlineCallbacks
     def dlr_throwing_callback(self, message):
         Thrower.throwing_callback(self, message)
 
@@ -698,6 +856,8 @@ class DLRThrower(Thrower):
             yield self.http_dlr_callback(message)
         elif message.routing_key == 'dlr_thrower.smpps':
             yield self.smpp_dlr_callback(message)
+        elif message.routing_key == 'dlr_thrower.sqs':
+            yield self.sqs_dlr_callback(message)
         else:
             self.log.error('Unknown routing_key in dlr_throwing_callback: %s', message.routing_key)
             yield self.rejectMessage(message)
