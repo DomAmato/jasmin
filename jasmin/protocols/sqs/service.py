@@ -471,7 +471,7 @@ class SQSService:
             # Build final response
             if not c.result:
                 self.stats.inc('server_error_count')
-                raise Exception('Failed to send SubmitSmPDU to [cid:%s]', routedConnector.cid)
+                raise Exception('Failed to send SubmitSmPDU to [cid:%s]' % routedConnector.cid)
             else:
                 self.stats.inc('success_count')
                 self.stats.set('last_success_at', datetime.now())
@@ -503,6 +503,7 @@ class SQSService:
                     if key != 'ReceiptHandle':
                         # message was mutated to make everything a list, unwind it and place it back on the queue
                         retry_message[key] = value[0]
+                retry_message['reason'] = str(e)
                 self.log.info('Sending message to the retry queue %s', retry_message)
                 try:
                     self.sqs.send_message(QueueUrl=self.retry_queue_url,

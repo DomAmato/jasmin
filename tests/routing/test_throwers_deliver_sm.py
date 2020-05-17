@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 
 from unittest.mock import Mock, patch
 
-import boto3
 from twisted.internet import reactor, defer
 from twisted.trial.unittest import TestCase
 from twisted.web import server

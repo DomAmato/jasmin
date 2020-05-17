@@ -29,3 +29,6 @@ requests~=2.23.0
 
 # For REST API
 python-mimeparse~=1.6.0
+
+# For SQS
+boto3~=1.13.9
