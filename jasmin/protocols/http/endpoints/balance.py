@@ -80,7 +80,6 @@ class Balance(Resource):
                 msg = e.message
             response = {'return': msg, 'status': code}
         except Exception as e:
-            print(e)
             self.log.error("Error: %s", e)
             response = {'return': "Unknown error: %s" % e, 'status': 500}
         finally:

@@ -43,7 +43,6 @@ class UrlArgsValidator:
                         value = args[field][0]
 
                     # Validate known args
-                    # print(f'Validating field {field} of value {value}')
                     if ('pattern' in self.fields[field]
                         and self.fields[field]['pattern'].match(value) is None):
                         raise UrlArgsValidationError(b"Argument [%s] has an invalid value: [%s]." % (
