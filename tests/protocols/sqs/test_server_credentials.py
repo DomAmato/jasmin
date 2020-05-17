@@ -878,34 +878,34 @@ class QuotasTestCases(CredentialsTestCases):
 
         # Set content
         self.params['content'] = 'Any Content'
-        baseurl = 'http://127.0.0.1:1401/send'
 
         # Send a bunch of MT messages
         # We should receive a msg id for success and error when throughput is exceeded
         start_time = datetime.now()
         throughput_exceeded_errors = 0
-        request_counter = 0
         for x in range(5000):
-            agent = Agent(reactor)
-            client = HTTPClient(agent)
-            response = yield client.post(baseurl, data=self.params)
-            response_text = yield text_content(response)
-            response_code = response.code
+            self.boto.receive_message.return_value = {
+            'Messages': [{
+                'ReceiptHandle': 'abc123',
+                'Body': json.dumps(self.params)
+                }]
+            }
 
-            request_counter += 1
-            if response_code == 403 and response_text == "User throughput exceeded":
-                throughput_exceeded_errors += 1
+            self.sqs.retrieveMessages()
+
         end_time = datetime.now()
 
         # Wait 2 seconds before stopping SmppClientConnectors
         yield waitFor(2)
         yield self.stopSmppClientConnectors()
 
+        for call in self.boto.send_message.call_args_list[0]:
+            throughput_exceeded_errors += 1
+        request_counter = self.boto.delete_message.call_count
         # Asserts (tolerance of -/+ 3 messages)
         throughput = 1 / float(user.mt_credential.getQuota('http_throughput'))
-        dt = end_time - start_time
-        max_unsuccessfull_requests = request_counter - \
-            (dt.seconds / throughput)
+        dt = end_time - start_time        
+        max_unsuccessfull_requests = 5000 - request_counter + (dt.seconds / throughput)
         unsuccessfull_requests = throughput_exceeded_errors
 
         self.assertGreaterEqual(unsuccessfull_requests,
