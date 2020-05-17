@@ -147,3 +147,6 @@ class SQSCredentialValidator(AbstractCredentialValidator):
         self._checkSendAuthorizations()
         self._checkSendFilters()
         
+    def _convert_to_string(self, arg_name, encoding_type=None):
+        value = self.request[arg_name][0]
+        return super()._convert_to_string(value, encoding_type)

@@ -232,60 +232,6 @@ class AuthorizationsTestCases(CredentialsTestCases):
         self.assertEqual(response_code, 200)
 
     @defer.inlineCallbacks
-    def test_default_balance(self):
-        # User have default authorization to check balance
-        response_text, response_code = yield self.run_balance_test()
-        self.assertEqual(json.loads(response_text), {"balance": "ND", "sms_count": "ND"})
-        self.assertEqual(response_code, 200)
-
-    @defer.inlineCallbacks
-    def test_unauthorized_user_balance(self):
-        user = copy.copy(self.user1)
-        user.mt_credential.setAuthorization('http_balance', False)
-
-        # User unauthorized
-        response_text, response_code = yield self.run_balance_test()
-        self.assertEqual(response_text, '"Authorization failed for user [u1] (Cannot check balance)."')
-        self.assertEqual(response_code, 400)
-
-    @defer.inlineCallbacks
-    def test_authorized_user_balance(self):
-        user = copy.copy(self.user1)
-        user.mt_credential.setAuthorization('http_balance', True)
-
-        # User authorized
-        response_text, response_code = yield self.run_balance_test()
-        self.assertEqual(json.loads(response_text), {"balance": "ND", "sms_count": "ND"})
-        self.assertEqual(response_code, 200)
-
-    @defer.inlineCallbacks
-    def test_default_rate(self):
-        # User have default authorization to check route rate
-        response_text, response_code = yield self.run_rate_test()
-        self.assertEqual(json.loads(response_text), {'submit_sm_count': 1, 'unit_rate': 0.0})
-        self.assertEqual(response_code, 200)
-
-    @defer.inlineCallbacks
-    def test_unauthorized_user_rate(self):
-        user = copy.copy(self.user1)
-        user.mt_credential.setAuthorization('http_rate', False)
-
-        # User unauthorized
-        response_text, response_code = yield self.run_rate_test()
-        self.assertEqual(response_text, '"Authorization failed for user [u1] (Cannot check rate)."')
-        self.assertEqual(response_code, 400)
-
-    @defer.inlineCallbacks
-    def test_authorized_user_rate(self):
-        user = copy.copy(self.user1)
-        user.mt_credential.setAuthorization('http_rate', True)
-
-        # User authorized
-        response_text, response_code = yield self.run_rate_test()
-        self.assertEqual(json.loads(response_text), {'submit_sm_count': 1, 'unit_rate': 0.0})
-        self.assertEqual(response_code, 200)
-
-    @defer.inlineCallbacks
     def test_default_long_content(self):
         # User have default authorization to send long content
         response_text, response_code = yield self.run_send_test(content='X' * 300)

@@ -445,6 +445,8 @@ class JCliProtocol(CmdProtocol):
             self.managers['stats'].smppcs(arg, opts)
         elif opts.httpapi:
             self.managers['stats'].httpapi(arg, opts)
+        elif opts.sqs:
+            self.managers['stats'].sqs(arg, opts)
         elif opts.smppsapi:
             self.managers['stats'].smppsapi(arg, opts)
         else:

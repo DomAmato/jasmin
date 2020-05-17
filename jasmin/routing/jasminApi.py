@@ -236,6 +236,12 @@ class CnxStatus(jasminApiGeneric):
             'rate_request_count': 0,
             'qos_last_submit_sm_at': 0,
         }
+        self.sqs = {
+            'connects_count': 0,
+            'last_activity_at': 0,
+            'submit_sm_request_count': 0,
+            'qos_last_submit_sm_at': 0,
+        }
 
 
 class UserStats(metaclass=Singleton):

@@ -150,6 +150,26 @@ class StatsManager(Manager):
 
         self.protocol.sendData(tabulate(table, headers, tablefmt="plain", numalign="left").encode('ascii'))
 
+    def sqs(self, arg, opts):
+        sc = SQSStatsCollector()
+        headers = ["#Item", "Value"]
+
+        table = []
+        for k, v in sc.get().getStats().items():
+            if isinstance(v, dict):
+                v = json.dumps(v)
+
+            row = []
+            row.append('#%s' % k)
+            if k[-3:] == '_at':
+                row.append(formatDateTime(v))
+            else:
+                row.append(v)
+
+            table.append(row)
+
+        self.protocol.sendData(tabulate(table, headers, tablefmt="plain", numalign="left").encode('ascii'))
+
     def smppsapi(self, arg, opts):
         """As of Jasmin's 0.6 version, there can be only one SMPPs API, the smpp server id
         is set for later evolution to handle multiple APIs, this is why the id is hard coded

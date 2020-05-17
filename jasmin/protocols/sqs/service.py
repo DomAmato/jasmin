@@ -104,17 +104,17 @@ class SQSService:
                       'username': {'optional': False, 'pattern': re.compile(r'^.{1,16}$')},
                       'password': {'optional': False, 'pattern': re.compile(r'^.{1,16}$')},
                       # Priority validation pattern can be validated/filtered further more
-                      # through HttpAPICredentialValidator
+                      # through SQSCredentialValidator
                       'priority': {'optional': True, 'pattern': re.compile(r'^[0-3]$')},
                       'sdt': {'optional': True,
                               'pattern': re.compile(r'^\d{2}\d{2}\d{2}\d{2}\d{2}\d{2}\d{1}\d{2}(\+|-|R)$')},
                       # Validity period validation pattern can be validated/filtered further more
-                      # through HttpAPICredentialValidator
+                      # through SQSCredentialValidator
                       'validity-period': {'optional': True, 'pattern': re.compile(r'^\d+$')},
                       'dlr': {'optional': False, 'pattern': re.compile(r'^(yes|no)$')},
                       'dlr-url': {'optional': True, 'pattern': re.compile(r'^(http|https)\://.*$')},
                       # DLR Level validation pattern can be validated/filtered further more
-                      # through HttpAPICredentialValidator
+                      # through SQSCredentialValidator
                       'dlr-level'   : {'optional': True, 'pattern': re.compile(r'^[1-3]$')},
                       'dlr-method'  : {'optional': True, 'pattern': re.compile(r'^(get|post)$', re.IGNORECASE)},
                       'tags'        : {'optional': True, 'pattern': re.compile(r'^([-a-zA-Z0-9,])*$')},
@@ -178,9 +178,26 @@ class SQSService:
             reactor.callFromThread(self.route_routable, message=message)
         except Exception as e:
             self.log.error("Error: %s", e)
+            self.do_retry(message, str(e))
+
+    def do_retry(self, message, reason):
+        if self.retry_queue_url:
+            retry_message = {}
+            for key, value in message.items():
+                if key != 'ReceiptHandle':
+                    # message was mutated to make everything a list, unwind it and place it back on the queue
+                    retry_message[key] = value[0]
+            retry_message['reason'] = reason
+            self.log.info('Sending message to the retry queue %s', retry_message)
+            try:
+                self.sqs.send_message(QueueUrl=self.retry_queue_url,
+                                        MessageGroupId='1',
+                                        MessageDeduplicationId=str(uuid.uuid4()),
+                                        MessageBody=json.dumps(retry_message))
+            except Exception as e:
+                self.log.error("Error sending message to retry queue: %s", str(e))
 
     def sendMessage(self, message):
-        print(f'Sending message {message} to {self.config.out_queue}')
         if self.out_queue_url:
             self.log.info('Sending message %s', message)
             try:
@@ -224,9 +241,9 @@ class SQSService:
             )
 
             # Update CnxStatus
-            user.getCnxStatus().httpapi['connects_count'] += 1
-            user.getCnxStatus().httpapi['submit_sm_request_count'] += 1
-            user.getCnxStatus().httpapi['last_activity_at'] = datetime.now()
+            user.getCnxStatus().sqs['connects_count'] += 1
+            user.getCnxStatus().sqs['submit_sm_request_count'] += 1
+            user.getCnxStatus().sqs['last_activity_at'] = datetime.now()
 
             # Build SubmitSmPDU
             SubmitSmPDU = self.opFactory.SubmitSM(
@@ -403,11 +420,11 @@ class SQSService:
                 dlr_method = None
 
             # QoS throttling
-            if (user.mt_credential.getQuota('http_throughput') and user.mt_credential.getQuota('http_throughput') >= 0) and user.getCnxStatus().httpapi[
+            if (user.mt_credential.getQuota('http_throughput') and user.mt_credential.getQuota('http_throughput') >= 0) and user.getCnxStatus().sqs[
                 'qos_last_submit_sm_at'] != 0:
                 qos_throughput_second = 1 / float(user.mt_credential.getQuota('http_throughput'))
                 qos_throughput_ysecond_td = timedelta(microseconds=qos_throughput_second * 1000000)
-                qos_delay = datetime.now() - user.getCnxStatus().httpapi['qos_last_submit_sm_at']
+                qos_delay = datetime.now() - user.getCnxStatus().sqs['qos_last_submit_sm_at']
                 if qos_delay < qos_throughput_ysecond_td:
                     self.stats.inc('throughput_error_count')
                     self.log.error(
@@ -417,7 +434,7 @@ class SQSService:
                         user)
 
                     raise ThroughputExceededError("User throughput exceeded")
-            user.getCnxStatus().httpapi['qos_last_submit_sm_at'] = datetime.now()
+            user.getCnxStatus().sqs['qos_last_submit_sm_at'] = datetime.now()
 
             # Get number of PDUs to be sent (for billing purpose)
             _pdu = routable.pdu
@@ -497,21 +514,7 @@ class SQSService:
                 logged_content.decode())
         except Exception as e:
             self.log.error("Error: %s", e)
-            if self.retry_queue_url:
-                retry_message = {}
-                for key, value in original_message.items():
-                    if key != 'ReceiptHandle':
-                        # message was mutated to make everything a list, unwind it and place it back on the queue
-                        retry_message[key] = value[0]
-                retry_message['reason'] = str(e)
-                self.log.info('Sending message to the retry queue %s', retry_message)
-                try:
-                    self.sqs.send_message(QueueUrl=self.retry_queue_url,
-                                            MessageGroupId='1',
-                                            MessageDeduplicationId=str(uuid.uuid4()),
-                                            MessageBody=json.dumps(retry_message))
-                except Exception as e:
-                    self.log.error("Error sending message to retry queue: %s", str(e))
+            self.do_retry(original_message, str(e))
         finally:
             if 'ReceiptHandle' not in original_message:
                 self.log.error("Cannot delete message without ReceiptHandle")
