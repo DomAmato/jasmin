@@ -804,8 +804,6 @@ class DLRThrower(Thrower):
     @defer.inlineCallbacks
     def sqs_dlr_callback(self, message):
         msgid = message.content.properties['message-id']
-        url = message.content.properties['headers']['url']
-        method = message.content.properties['headers']['method']
         level = message.content.properties['headers']['level']
         self.log.debug('Got one message (msgid:%s) to throw', msgid)
 
@@ -866,9 +864,8 @@ class DLRThrower(Thrower):
             yield self.http_dlr_callback(message)
         elif message.routing_key == 'dlr_thrower.smpps':
             yield self.smpp_dlr_callback(message)
-        # DLR part not ready yet
-        # elif message.routing_key == 'dlr_thrower.sqs':
-        #     yield self.sqs_dlr_callback(message)
+        elif message.routing_key == 'dlr_thrower.sqs':
+            yield self.sqs_dlr_callback(message)
         else:
             self.log.error('Unknown routing_key in dlr_throwing_callback: %s', message.routing_key)
             yield self.rejectMessage(message)

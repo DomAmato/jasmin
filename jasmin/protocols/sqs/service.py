@@ -125,7 +125,7 @@ class SQSService:
                       # DLR Level validation pattern can be validated/filtered further more
                       # through SQSCredentialValidator
                       'dlr-level'   : {'optional': True, 'pattern': re.compile(r'^[1-3]$')},
-                      'dlr-method'  : {'optional': True, 'pattern': re.compile(r'^(get|post)$', re.IGNORECASE)},
+                      'dlr-method'  : {'optional': True, 'pattern': re.compile(r'^(get|post|sqs)$', re.IGNORECASE)},
                       'tags'        : {'optional': True, 'pattern': re.compile(r'^([-a-zA-Z0-9,])*$')},
                       'content'     : {'optional': True},
                       'hex-content' : {'optional': True},
@@ -504,7 +504,7 @@ class SQSService:
                 dlr_level=dlr_level,
                 dlr_method=dlr_method,
                 dlr_connector=routedConnector.cid,
-                source_connector='sqs')
+                source_connector='sqs' if dlr_method == 'SQS' else 'httpapi')
 
             # Build final response
             if not c.result:

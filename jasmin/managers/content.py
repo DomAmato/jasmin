@@ -116,7 +116,7 @@ class DLRContentForSQS(Content):
     """A DLR Content holding information about the origin SubmitSm sent from sqs and
     receipt acknowledgment details"""
 
-    def __init__(self, message_status, msgid, dlr_url, dlr_level, dlr_connector='unknown', id_smsc='', sub='',
+    def __init__(self, message_status, msgid, dlr_level, dlr_connector='unknown', id_smsc='', sub='',
                  dlvrd='', subdate='', donedate='', err='', text='', trycount=0):
 
         # ESME_* statuses are returned from SubmitSmResp
@@ -127,8 +127,7 @@ class DLRContentForSQS(Content):
         if dlr_level not in [1, 2, 3]:
             raise InvalidParameterError("Invalid dlr_level: %s" % dlr_level)
 
-        properties = {'message-id': msgid, 'headers': {'try-count': 0,
-                                                       'url': dlr_url,
+        properties = {'message-id': msgid, 'headers': {'try-count': trycount,
                                                        'message_status': message_status,
                                                        'level': dlr_level,
                                                        'id_smsc': id_smsc,
