@@ -15,11 +15,13 @@ from jasmin.routing.Routes import DefaultRoute, StaticMTRoute
 from jasmin.routing.configs import RouterPBConfig
 from jasmin.routing.jasminApi import User, Group, SmppClientConnector
 from jasmin.routing.router import RouterPB
-from .twisted_web_test_utils import DummySite
+from jasmin.protocols.http.stats import HttpAPIStatsCollector
+from tests.protocols.http.twisted_web_test_utils import DummySite
 
 
 class HTTPApiTestCases(TestCase):
     def setUp(self):
+        HttpAPIStatsCollector.apis = {}
         # Instanciate a RouterPB (a requirement for HTTPApi)
         RouterPBConfigInstance = RouterPBConfig()
         self.RouterPB_f = RouterPB(RouterPBConfigInstance)

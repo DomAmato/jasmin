@@ -23,6 +23,7 @@ from tests.routing.test_router_smpps import SMPPClientTestCases
 from jasmin.routing.throwers import deliverSmThrower
 from jasmin.protocols.sqs.service import SQS, SQSService
 from jasmin.protocols.sqs.configs import SQSConfig
+from jasmin.protocols.http.stats import HttpAPIStatsCollector
 
 
 @defer.inlineCallbacks
@@ -86,6 +87,7 @@ class HTTPDeliverSmThrowingTestCases(deliverSmThrowerTestCase):
 
     @defer.inlineCallbacks
     def setUp(self):
+        HttpAPIStatsCollector.apis = {}
         yield deliverSmThrowerTestCase.setUp(self)
 
         # Start http servers
