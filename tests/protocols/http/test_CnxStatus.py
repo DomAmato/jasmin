@@ -14,7 +14,7 @@ def waitFor(seconds):
 class CnxStatusCases(HTTPApiTestCases):
     @defer.inlineCallbacks
     def test_connects_count(self):
-        self.assertEqual(self.u1.getCnxStatus().httpapi['connects_count'], 0)
+        initial_count = self.u1.getCnxStatus().httpapi['connects_count']
 
         for i in range(10):
             yield self.web.post(b'send', {'username': self.u1.username,
@@ -24,7 +24,7 @@ class CnxStatusCases(HTTPApiTestCases):
 
         yield waitFor(4)
 
-        self.assertEqual(self.u1.getCnxStatus().httpapi['connects_count'], 10)
+        self.assertEqual(self.u1.getCnxStatus().httpapi['connects_count'], initial_count+10)
 
     @defer.inlineCallbacks
     def test_last_activity_at(self):
