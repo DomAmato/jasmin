@@ -430,6 +430,8 @@ class JCliProtocol(CmdProtocol):
                           help="Show all smpp connectors stats"),
               make_option(None, '--httpapi', action="store_true",
                           help="Show HTTP API stats"),
+            make_option(None, '--sqs', action="store_true",
+                          help="Show SQS stats"),
               make_option(None, '--smppsapi', action="store_true",
                           help="Show SMPP Server API stats")], '')
     def do_stats(self, arg, opts=None):

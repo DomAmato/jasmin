@@ -8,7 +8,7 @@ from txamqp.queue import Closed
 from txredisapi import ConnectionError
 from smpp.pdu.pdu_types import RegisteredDeliveryReceipt
 
-from jasmin.managers.content import DLRContentForHttpapi, DLRContentForSmpps
+from jasmin.managers.content import DLRContentForHttpapi, DLRContentForSQS, DLRContentForSmpps
 from jasmin.tools.singleton import Singleton
 from jasmin.tools import to_enum
 
@@ -174,7 +174,7 @@ class DLRLookup:
 
             if dlr is None or len(dlr) == 0:
                 raise DLRMapNotFound('No dlr map for msgid[%s]' % msgid)
-            if 'sc' not in dlr or dlr['sc'] not in ['httpapi', 'smppsapi']:
+            if 'sc' not in dlr or dlr['sc'] not in ['httpapi', 'smppsapi', 'sqs']:
                 raise DLRMapError('Fetched unknown dlr: %s' % dlr)
 
             if dlr['sc'] == 'httpapi':
@@ -222,6 +222,52 @@ class DLRLookup:
                                    smpp_msgid, msgid, dlr_expiry)
                     hashKey = "queue-msgid:%s" % smpp_msgid
                     hashValues = {'msgid': msgid, 'connector_type': 'httpapi'}
+                    yield self.redisClient.hmset(hashKey, hashValues)
+                    yield self.redisClient.expire(hashKey, dlr_expiry)
+            if dlr['sc'] == 'sqs':
+                self.log.debug('There is a SQS DLR request for msgid[%s] ...', msgid)
+                dlr_url = dlr['url']
+                dlr_level = dlr['level']
+                dlr_method = dlr['method']
+                dlr_expiry = dlr['expiry']
+                dlr_connector = dlr.get('connector', 'unknown')
+
+                if dlr['level'] in [1, 3]:
+                    self.log.debug('Got DLR information for msgid[%s], url:%s, level:%s, connector:%s',
+                                   msgid, dlr_url, dlr_level, dlr_connector)
+
+                    # The dlr_url in DLRContentForHttpapi indicates the level
+                    # of the actual delivery receipt (1) and not the requested
+                    # one (maybe 1 or 3)
+                    self.log.debug("Publishing DLRContentForHttpapi[%s] with routing_key[%s]",
+                                   msgid, 'dlr_thrower.http')
+                    yield self.amqpBroker.publish(exchange='messaging',
+                                                  routing_key='dlr_thrower.http',
+                                                  content=DLRContentForSQS(dlr_status,
+                                                                               msgid, dlr_url,
+                                                                               dlr_level=1,
+                                                                               dlr_connector=dlr_connector))
+
+                    # DLR request is removed if:
+                    # - If level 1 is requested (SMSC level only)
+                    # - SubmitSmResp returned an error (no more delivery will be tracked)
+                    #
+                    # When level 3 is requested, the DLR will be removed when
+                    # receiving a deliver_sm (terminal receipt)
+                    if dlr_level == 1 or dlr_status != 'ESME_ROK':
+                        self.log.debug('Removing DLR request for msgid[%s]', msgid)
+                        yield self.redisClient.delete("dlr:%s" % msgid)
+                else:
+                    self.log.debug(
+                        'Terminal level receipt is requested, will not send any DLR receipt at this level.')
+
+                if dlr_level in [2, 3] and dlr_status == 'ESME_ROK':
+                    smpp_msgid = message.content.properties['headers']['smpp_msgid']
+                    # Map received submit_sm_resp's message_id to the msg for later receipt handling
+                    self.log.debug('Mapping smpp msgid: %s to queue msgid: %s, expiring in %s',
+                                   smpp_msgid, msgid, dlr_expiry)
+                    hashKey = "queue-msgid:%s" % smpp_msgid
+                    hashValues = {'msgid': msgid, 'connector_type': 'sqs'}
                     yield self.redisClient.hmset(hashKey, hashValues)
                     yield self.redisClient.expire(hashKey, dlr_expiry)
             elif dlr['sc'] == 'smppsapi':
@@ -359,6 +405,37 @@ class DLRLookup:
                                                                                method=dlr_method))
 
                     self.log.debug('Removing HTTP dlr map for msgid[%s]', submit_sm_queue_id)
+                    yield self.redisClient.delete('dlr:%s' % submit_sm_queue_id)
+            elif connector_type == 'sqs':
+                self.log.debug('There is a SQS DLR request for msgid[%s] ...', msgid)
+                dlr_url = dlr['url']
+                dlr_level = dlr['level']
+                dlr_method = dlr['method']
+
+                if dlr_level in [2, 3]:
+                    self.log.debug('Got DLR information for msgid[%s], url:%s, level:%s',
+                                   submit_sm_queue_id, dlr_url, dlr_level)
+                    # The dlr_url in DLRContentForSQS indicates the level
+                    # of the actual delivery receipt (2) and not the
+                    # requested one (maybe 2 or 3)
+                    self.log.debug("Publishing DLRContentForHttpapi[%s] with routing_key[%s]",
+                                   submit_sm_queue_id, 'dlr_thrower.sqs')
+                    yield self.amqpBroker.publish(exchange='messaging',
+                                                  routing_key='dlr_thrower.sqs',
+                                                  content=DLRContentForSQS(pdu_dlr_status,
+                                                                               submit_sm_queue_id,
+                                                                               dlr_url, dlr_level=2,
+                                                                               dlr_connector=pdu_dlr_id,
+                                                                               id_smsc=msgid,
+                                                                               sub=pdu_dlr_sub,
+                                                                               dlvrd=pdu_dlr_dlvrd,
+                                                                               subdate=pdu_dlr_sdate,
+                                                                               donedate=pdu_dlr_ddate,
+                                                                               err=pdu_dlr_err,
+                                                                               text=pdu_dlr_text,
+                                                                               method=dlr_method))
+
+                    self.log.debug('Removing SQS dlr map for msgid[%s]', submit_sm_queue_id)
                     yield self.redisClient.delete('dlr:%s' % submit_sm_queue_id)
             elif connector_type == 'smppsapi':
                 self.log.debug('There is a SMPPs mapping for msgid[%s] ...', msgid)

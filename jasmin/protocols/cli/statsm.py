@@ -1,11 +1,13 @@
 import pickle
 import json
+from tabulate import tabulate
+
 from jasmin.protocols.cli.managers import Manager
 from jasmin.protocols.smpp.stats import SMPPClientStatsCollector, SMPPServerStatsCollector
 from jasmin.protocols.http.stats import HttpAPIStatsCollector
-from .usersm import UserExist
-from .smppccm import ConnectorExist
-from tabulate import tabulate
+from jasmin.protocols.sqs.stats import SQSStatsCollector
+from jasmin.protocols.cli.usersm import UserExist
+from jasmin.protocols.cli.smppccm import ConnectorExist
 
 
 def formatDateTime(dt):

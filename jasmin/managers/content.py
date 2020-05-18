@@ -112,6 +112,36 @@ class DLRContentForHttpapi(Content):
 
         Content.__init__(self, msgid, properties=properties)
 
+class DLRContentForSQS(Content):
+    """A DLR Content holding information about the origin SubmitSm sent from sqs and
+    receipt acknowledgment details"""
+
+    def __init__(self, message_status, msgid, dlr_url, dlr_level, dlr_connector='unknown', id_smsc='', sub='',
+                 dlvrd='', subdate='', donedate='', err='', text='', trycount=0):
+
+        # ESME_* statuses are returned from SubmitSmResp
+        # Others are returned from DeliverSm, values must be the same as Table B-2
+        if message_status[:5] != 'ESME_' and message_status not in ['DELIVRD', 'EXPIRED', 'DELETED',
+                                                                    'UNDELIV', 'ACCEPTD', 'UNKNOWN', 'REJECTD']:
+            raise InvalidParameterError("Invalid message_status: %s" % message_status)
+        if dlr_level not in [1, 2, 3]:
+            raise InvalidParameterError("Invalid dlr_level: %s" % dlr_level)
+
+        properties = {'message-id': msgid, 'headers': {'try-count': 0,
+                                                       'url': dlr_url,
+                                                       'message_status': message_status,
+                                                       'level': dlr_level,
+                                                       'id_smsc': id_smsc,
+                                                       'sub': sub,
+                                                       'dlvrd': dlvrd,
+                                                       'subdate': subdate,
+                                                       'donedate': donedate,
+                                                       'err': err,
+                                                       'connector': dlr_connector,
+                                                       'text': text}}
+
+        Content.__init__(self, msgid, properties=properties)
+
 
 class DLRContentForSmpps(Content):
     """A DLR Content holding information about the origin SubmitSm sent from smpps and
@@ -153,7 +183,7 @@ class SubmitSmContent(PDU):
         if priority < 0 or priority > 3:
             raise InvalidParameterError("Priority must be set from 0 to 3, it is actually set to %s" %
                                         priority)
-        if source_connector not in ['httpapi', 'smppsapi']:
+        if source_connector not in ['httpapi', 'smppsapi', 'sqs']:
             raise InvalidParameterError('Invalid source_connector value: %s.' % source_connector)
         if msgid is None:
             msgid = randomUniqueId('submit_sm', uid, source_connector, destination_cid)

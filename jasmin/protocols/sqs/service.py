@@ -483,7 +483,8 @@ class SQSService:
                 dlr_url=dlr_url,
                 dlr_level=dlr_level,
                 dlr_method=dlr_method,
-                dlr_connector=routedConnector.cid)
+                dlr_connector=routedConnector.cid,
+                source_connector='sqs')
 
             # Build final response
             if not c.result:

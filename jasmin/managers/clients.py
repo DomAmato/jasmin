@@ -585,7 +585,7 @@ class SMPPClientManagerPB(pb.Avatar):
             submit_sm_bill=submit_sm_bill,
             priority=priority,
             expiration=validity_period,
-            source_connector='httpapi' if source_connector == 'httpapi' else 'smppsapi',
+            source_connector='smppsapi' if isinstance(source_connector, SMPPServerProtocol) else source_connector,
             destination_cid=cid)
         yield self.amqpBroker.publish(exchange='messaging', routing_key=pubQueueName, content=c)
 
@@ -603,6 +603,28 @@ class SMPPClientManagerPB(pb.Avatar):
                 # Set values and callback expiration setting
                 hashKey = "dlr:%s" % (c.properties['message-id'])
                 hashValues = {'sc': 'httpapi',
+                              'url': dlr_url,
+                              'level': dlr_level,
+                              'method': dlr_method,
+                              'connector': dlr_connector,
+                              'expiry': connector['config'].dlr_expiry}
+                self.redisClient.hmset(hashKey, hashValues).addCallback(
+                    lambda response: self.redisClient.expire(
+                        hashKey, connector['config'].dlr_expiry))
+        elif source_connector == 'sqs' and dlr_url is not None:
+            # Enqueue DLR request in redis 'dlr' key if it is a sqs request
+            if self.redisClient is None or str(self.redisClient) == '<Redis Connection: Not connected>':
+                self.log.warn("DLR is not enqueued for SubmitSmPDU [msgid:%s], RC is not connected.",
+                              c.properties['message-id'])
+            else:
+                self.log.debug('Setting DLR url (%s) and level (%s) for message id:%s, expiring in %s',
+                               dlr_url,
+                               dlr_level,
+                               c.properties['message-id'],
+                               connector['config'].dlr_expiry)
+                # Set values and callback expiration setting
+                hashKey = "dlr:%s" % (c.properties['message-id'])
+                hashValues = {'sc': 'sqs',
                               'url': dlr_url,
                               'level': dlr_level,
                               'method': dlr_method,
