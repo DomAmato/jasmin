@@ -2,7 +2,7 @@ from twisted.internet import defer
 from .test_jcli import jCliWithoutAuthTestCases
 from .test_userm import UserTestCases
 from .test_smppccm import SmppccmTestCases
-
+from jasmin.protocols.http.stats import HttpAPIStatsCollector
 
 class BasicTestCases(jCliWithoutAuthTestCases):
     def test_user(self):
@@ -31,6 +31,7 @@ class BasicTestCases(jCliWithoutAuthTestCases):
         return self._test(r'jcli : ', commands)
 
     def test_httpapi(self):
+        HttpAPIStatsCollector.apis = {}
         expectedList = ['#Item                     Value',
                         '#created_at               ND',
                         '#request_count            0',

@@ -38,16 +38,6 @@ class jCliTestCases(ProtocolTestCases):
         self.RouterPBConfigInstance.authentication = False
         self.RouterPB_f = RouterPB(self.RouterPBConfigInstance)
 
-        # Delete any previously persisted configuration
-        persistenceFolder = self.RouterPBConfigInstance.store_path
-        for the_file in os.listdir(persistenceFolder):
-            if the_file == '.gitignore':
-                # Dont delete any hidden file
-                continue
-            file_path = os.path.join(persistenceFolder, the_file)
-            if os.path.isfile(file_path):
-                os.unlink(file_path)
-
         # Instanciate a SMPPClientManagerPB (a requirement for JCliFactory)
         SMPPClientPBConfigInstance = SMPPClientPBConfig()
         SMPPClientPBConfigInstance.authentication = False
