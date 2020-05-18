@@ -483,7 +483,6 @@ class JasminDaemon:
         ########################################################
         if not self.options['disable-sqs']:
             try:
-                self.log.info('Starting SQS')
                 # [optional] Start SQS service
                 self.startSQSService()
             except Exception as e:

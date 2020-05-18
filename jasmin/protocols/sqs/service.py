@@ -56,19 +56,28 @@ class SQSService:
             self.log.addHandler(handler)
             self.log.propagate = False
 
-        self.sqs = boto3.client('sqs',
-                                  aws_access_key_id=config.key,
-                                  aws_secret_access_key=config.secret,
-                                  region_name=config.region)
+        try:
+            # We should set credentials in env variables or a credentials file
+            self.sqs = boto3.client('sqs')
+        except:
+            # Set from config vars as a fallback
+            self.sqs = boto3.client('sqs',
+                                    aws_access_key_id=config.key,
+                                    aws_secret_access_key=config.secret,
+                                    region_name=config.region)
+
+        self.log.debug('Connecting to queue: %s for inbound messages', config.in_queue)
 
         response = self.sqs.get_queue_url(QueueName=config.in_queue)
         self.in_queue_url = response['QueueUrl']
 
         if config.out_queue:
+            self.log.debug('Connecting to queue: %s for outbound messages', config.out_queue)
             response = self.sqs.get_queue_url(QueueName=config.out_queue)
             self.out_queue_url = response['QueueUrl']
 
         if config.retry_queue:
+            self.log.debug('Connecting to queue: %s for failed messages', config.retry_queue)
             response = self.sqs.get_queue_url(QueueName=config.retry_queue)
             self.retry_queue_url = response['QueueUrl']
         
