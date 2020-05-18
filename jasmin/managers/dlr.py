@@ -1,6 +1,7 @@
 import sys
 import logging
 from logging.handlers import TimedRotatingFileHandler
+import traceback
 
 from twisted.internet import defer
 from twisted.internet import reactor
@@ -337,6 +338,7 @@ class DLRLookup:
             yield self.rejectMessage(message)
         except Exception as e:
             self.log.error('[msgid:%s] Unknown error (%s): %s', msgid, type(e), e)
+            self.log.error(traceback.format_exc())
             yield self.rejectMessage(message)
         else:
             yield self.ackMessage(message)
@@ -502,6 +504,7 @@ class DLRLookup:
                 yield self.rejectMessage(message)
         except Exception as e:
             self.log.error('[msgid:%s] Unknown error (%s): %s', msgid, type(e), e)
+            self.log.error(traceback.format_exc())
             yield self.rejectMessage(message)
         else:
             yield self.ackMessage(message)

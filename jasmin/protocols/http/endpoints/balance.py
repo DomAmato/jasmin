@@ -1,6 +1,7 @@
 from datetime import datetime
 import re
 import json
+import traceback
 
 from twisted.web.resource import Resource
 
@@ -81,6 +82,7 @@ class Balance(Resource):
             response = {'return': msg, 'status': code}
         except Exception as e:
             self.log.error("Error: %s", e)
+            self.log.error(traceback.format_exc())
             response = {'return': "Unknown error: %s" % e, 'status': 500}
         finally:
             self.log.debug("Returning %s to %s.", response, request.getClientIP())

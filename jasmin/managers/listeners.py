@@ -5,6 +5,7 @@ import logging
 import struct
 from datetime import datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
+import traceback
 
 from dateutil import parser
 from twisted.internet import defer
@@ -249,8 +250,9 @@ class SMPPClientSMListener:
             self.rejectAndRequeueMessage(message)
             defer.returnValue(False)
         except Exception as e:
-            self.log.critical("Rejecting SubmitSmPDU[%s] through [cid:%s] for an unknown error (%s): %s",
+            self.log.critical("Rejecting SubmitSmPDU[%s] through [cid:%s] for an unknown error (%s): %s ",
                               msgid, self.SMPPClientFactory.config.id, type(e), e)
+            self.log.critical(traceback.format_exc())
             self.rejectMessage(message)
             defer.returnValue(False)
 

@@ -1,4 +1,5 @@
 import time
+import traceback
 
 import requests
 from celery import Celery, Task
@@ -58,6 +59,7 @@ def httpapi_send(self, batch_id, batch_config, message_params, config):
                                  'HTTPAPI Connection error: %s' % e)
     except Exception as e:
         logger.error('[%s] Unknown error (%s): %s' % (batch_id, type(e), e))
+        logger.error(traceback.format_exc())
         if batch_config.get('errback_url', None):
             batch_callback.delay(batch_config.get('errback_url'), batch_id, message_params['to'], 0,
                                  'Unknown error: %s' % e)

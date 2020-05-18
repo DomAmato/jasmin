@@ -2,6 +2,7 @@ from datetime import datetime
 import re
 import json
 import pickle
+import traceback
 
 from twisted.internet import reactor, defer
 from twisted.web.resource import Resource
@@ -165,6 +166,7 @@ class Rate(Resource):
             response = {'return': msg, 'status': code}
         except Exception as e:
             self.log.error("Error: %s", e)
+            self.log.error(traceback.format_exc())
             response = {'return': "Unknown error: %s" % e, 'status': 500}
         finally:
             self.log.debug("Returning %s to %s.", response, request.getClientIP())
@@ -260,6 +262,7 @@ class Rate(Resource):
             
         except Exception as e:
             self.log.error("Error: %s", e)
+            self.log.error(traceback.format_exc())
             response = {'return': "Unknown error: %s" % e, 'status': 500}
 
             self.log.debug("Returning %s to %s.", response, request.getClientIP())

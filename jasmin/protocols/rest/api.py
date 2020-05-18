@@ -25,7 +25,7 @@ class JasminHttpApiProxy:
             raise HTTPInternalServerError('Jasmin httpapi connection error',
                                                  'Could not connect to Jasmin http api (%s): %s' % (old_api_uri, e))
         except Exception as e:
-            raise HTTPInternalServerError('Jasmin httpapi unknown error', str(e))
+            raise HTTPInternalServerError('Jasmin httpapi unknown error', str(e), traceback.format_exc())
         else:
             return r.status_code, r.content.strip('"')
 

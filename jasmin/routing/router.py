@@ -2,6 +2,7 @@ import pickle
 import sys
 import logging
 import time
+import traceback
 from copy import copy
 from hashlib import md5
 from logging.handlers import TimedRotatingFileHandler
@@ -533,6 +534,7 @@ class RouterPB(pb.Avatar):
             return False
         except Exception as e:
             self.log.error('Unknown error occurred while persisting configuration: %s', e)
+            self.log.error(traceback.format_exc())
             return False
 
         return True
@@ -688,6 +690,7 @@ class RouterPB(pb.Avatar):
             return False
         except Exception as e:
             self.log.error('Unknown error occurred while loading configuration: %s', e)
+            self.log.error(traceback.format_exc())
             return False
 
         return True
@@ -979,6 +982,7 @@ class RouterPB(pb.Avatar):
             return False
         except Exception as e:
             self.log.error('Unknown error occurred while adding MT Interceptor: %s', str(e))
+            self.log.error(traceback.format_exc())
             return False
 
         # Set persistance state to False (pending for persistance)
@@ -998,6 +1002,7 @@ class RouterPB(pb.Avatar):
             return False
         except Exception as e:
             self.log.error('Unknown error occurred while adding MO Interceptor: %s', str(e))
+            self.log.error(traceback.format_exc())
             return False
 
         # Set persistance state to False (pending for persistance)
@@ -1065,6 +1070,7 @@ class RouterPB(pb.Avatar):
             return False
         except Exception as e:
             self.log.error('Unknown error occurred while adding MT Route: %s', str(e))
+            self.log.error(traceback.format_exc())
             return False
 
         # Set persistance state to False (pending for persistance)
@@ -1084,6 +1090,7 @@ class RouterPB(pb.Avatar):
             return False
         except Exception as e:
             self.log.error('Unknown error occurred while adding MO Route: %s', str(e))
+            self.log.error(traceback.format_exc())
             return False
 
         # Set persistance state to False (pending for persistance)

@@ -4,6 +4,7 @@ import sys
 import time
 import logging
 from logging.handlers import TimedRotatingFileHandler
+import traceback
 
 from twisted.internet import defer
 from twisted.spread import pb
@@ -159,6 +160,7 @@ class SMPPClientManagerPB(pb.Avatar):
             return False
         except Exception as e:
             self.log.error('Unknown error occurred while persisting configuration: %s', e)
+            self.log.error(traceback.format_exc())
             return False
 
         return True
@@ -213,6 +215,7 @@ class SMPPClientManagerPB(pb.Avatar):
             defer.returnValue(False)
         except Exception as e:
             self.log.error('Unknown error occurred while loading configuration: %s', e)
+            self.log.error(traceback.format_exc())
             defer.returnValue(False)
 
         defer.returnValue(True)

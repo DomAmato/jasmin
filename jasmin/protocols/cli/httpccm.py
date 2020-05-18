@@ -2,6 +2,8 @@ import pickle
 import time
 import jasmin
 import os
+import traceback
+
 from jasmin.protocols.cli.managers import PersistableManager, Session
 from jasmin.tools.migrations.configuration import ConfigurationMigrator
 from jasmin.routing.jasminApi import HttpConnector
@@ -113,7 +115,7 @@ class HttpccManager(PersistableManager):
         except IOError:
             return self.protocol.sendData('Cannot persist to %s' % path)
         except Exception as e:
-            return self.protocol.sendData('Unknown error occurred while persisting configuration: %s' % e)
+            return self.protocol.sendData('Unknown error occurred while persisting configuration: %s\n%s' % (e, traceback.format_exc()))
 
         self.protocol.sendData(
             '%s configuration persisted (profile:%s)' % (self.managerName, opts.profile), prompt=False)
@@ -148,7 +150,7 @@ class HttpccManager(PersistableManager):
         except IOError as e:
             raise Exception('Cannot load from %s: %s' % (path, str(e)))
         except Exception as e:
-            raise Exception('Unknown error while loading configuration: %s' % e)
+            raise Exception('Unknown error while loading configuration: %s\n%s', e, traceback.format_exc())
 
     def list(self, arg, opts):
         counter = 0
