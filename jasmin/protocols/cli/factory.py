@@ -119,7 +119,7 @@ class JCliFactory(ServerFactory):
         while True:
             for _pl in pending_load:
                 if re.match(rb'.*%s configuration loaded.*' % _pl, tr.value(), re.DOTALL):
-                    self.log.info(b"%s configuration loaded.", _pl)
+                    self.log.info("%s configuration loaded.", _pl.decode())
                     pending_load.remove(_pl)
 
             if len(pending_load) > 0:
