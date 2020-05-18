@@ -188,6 +188,7 @@ class SQSService:
         except Exception as e:
             self.log.error("Error: %s", e)
             self.do_retry(message, str(e))
+            self.deleteMessage(message)
 
     def do_retry(self, message, reason):
         if self.retry_queue_url:
@@ -205,6 +206,16 @@ class SQSService:
                                         MessageBody=json.dumps(retry_message))
             except Exception as e:
                 self.log.error("Error sending message to retry queue: %s", str(e))
+
+    def deleteMessage(self, message):
+        if 'ReceiptHandle' not in message:
+            self.log.error("Cannot delete message without ReceiptHandle")
+            return
+        try:
+            self.sqs.delete_message(QueueUrl=self.in_queue_url,
+                                    ReceiptHandle=message['ReceiptHandle'])
+        except Exception as e:
+            self.log.error("Error deleting message from queue. %s", str(e))
 
     def sendMessage(self, message):
         if self.out_queue_url:
@@ -526,14 +537,7 @@ class SQSService:
             self.log.error("Error: %s", e)
             self.do_retry(original_message, str(e))
         finally:
-            if 'ReceiptHandle' not in original_message:
-                self.log.error("Cannot delete message without ReceiptHandle")
-                raise Exception("Cannot delete message without ReceiptHandle")
-            try:
-                self.sqs.delete_message(QueueUrl=self.in_queue_url,
-                                        ReceiptHandle=original_message['ReceiptHandle'])
-            except Exception as e:
-                self.log.error("Error deleting message from queue. %s", str(e))
+            self.deleteMessage(original_message)
         
 class SQS(metaclass=Singleton):
     """SQS connection holder"""
