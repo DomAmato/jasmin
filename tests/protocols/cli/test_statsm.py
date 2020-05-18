@@ -3,8 +3,18 @@ from .test_jcli import jCliWithoutAuthTestCases
 from .test_userm import UserTestCases
 from .test_smppccm import SmppccmTestCases
 from jasmin.protocols.http.stats import HttpAPIStatsCollector
+from jasmin.protocols.smpp.stats import SMPPServerStatsCollector, SMPPClientStatsCollector
+from jasmin.protocols.sqs.stats import SQSStatsCollector
 
 class BasicTestCases(jCliWithoutAuthTestCases):
+    @defer.inlineCallbacks
+    def setUp(self):
+        HttpAPIStatsCollector.apis = {}
+        SMPPClientStatsCollector.connectors = {}
+        SMPPServerStatsCollector.connectors = {}
+        SQSStatsCollector.apis = {}
+        yield jCliWithoutAuthTestCases.setUp(self)
+
     def test_user(self):
         uid = 'foo'
 
