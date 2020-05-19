@@ -1,20 +1,30 @@
 import datetime
+import json
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from twisted.internet import reactor, defer
 from twisted.trial.unittest import TestCase
 from twisted.web import server
+from smpp.pdu.pdu_types import MessageState, CommandId
 
-from jasmin.managers.content import DLRContentForHttpapi, DLRContentForSmpps
+from jasmin.managers.clients import SMPPClientManagerPB
+from jasmin.managers.configs import SMPPClientPBConfig
+from jasmin.managers.content import DLRContentForHttpapi, DLRContentForSQS, DLRContentForSmpps
 from jasmin.queues.configs import AmqpConfig
 from jasmin.queues.factory import AmqpFactory
 from jasmin.routing.configs import DLRThrowerConfig
 from jasmin.routing.proxies import RouterPBProxy
+from jasmin.protocols.sqs.configs import SQSConfig
+from jasmin.protocols.sqs.service import SQS
+from jasmin.routing.configs import RouterPBConfig
+from jasmin.routing.jasminApi import User, Group, SmppClientConnector
+from jasmin.routing.router import RouterPB
+from jasmin.routing.Routes import DefaultRoute
+from jasmin.routing.throwers import DLRThrower
+
 from tests.routing.http_server import TimeoutLeafServer, AckServer, NoAckServer, Error404Server
 from tests.routing.test_router import SubmitSmTestCaseTools
 from tests.routing.test_router_smpps import SMPPClientTestCases
-from jasmin.routing.throwers import DLRThrower
-from smpp.pdu.pdu_types import MessageState, CommandId
 
 
 @defer.inlineCallbacks
@@ -207,6 +217,84 @@ class HTTPDLRThrowerTestCase(DLRThrowerTestCases):
         self.assertEqual(callArgs[b'text'][0], b'Any text')
         self.assertEqual(callArgs[b'connector'][0], dlr_connector.encode())
 
+
+class SQSDLRThrowerTestCase(DLRThrowerTestCases):
+    @defer.inlineCallbacks
+    def setUp(self):
+        yield DLRThrowerTestCases.setUp(self)
+        with patch('boto3.client') as boto:
+            config = SQSConfig()
+            config.out_queue = 'test'
+            SQS().get(config=config)
+
+    @defer.inlineCallbacks
+    def publishDLRContentForSQS(self, message_status, msgid, dlr_level, dlr_connector='unknown', id_smsc='', sub='',
+                                    dlvrd='', subdate='', donedate='', err='', text='', trycount=0):
+        content = DLRContentForSQS(message_status, msgid, dlr_level, dlr_connector, id_smsc, sub, dlvrd, subdate,
+                                       donedate, err, text, trycount)
+        yield self.amqpBroker.publish(exchange='messaging', routing_key='dlr_thrower.sqs', content=content)
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_connector_with_ack(self):
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+            dlr_level = 1
+            msgid = 'anything'
+            message_status = 'DELIVRD'
+            self.publishDLRContentForSQS(message_status, msgid, dlr_level)
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+            callArgs = json.loads(send_message.call_args_list[0][0][0])
+            # Because the full suite of services is not made it fails but with a different message
+            self.assertEqual(callArgs, {'connector': 'unknown', 'id': 'anything', 'level': 1, 'message_status': 'DELIVRD'})
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_connector_dlr_level1(self):
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+            dlr_level = 1
+            dlr_connector = 'test_cid'
+            msgid = 'anything'
+            message_status = 'DELIVRD'
+            self.publishDLRContentForSQS(message_status, msgid, dlr_level, dlr_connector)
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+            callArgs = json.loads(send_message.call_args_list[0][0][0])
+            self.assertEqual(callArgs['message_status'], message_status)
+            self.assertEqual(callArgs['id'], msgid)
+            self.assertEqual(callArgs['level'], dlr_level)
+            self.assertEqual(callArgs['connector'], dlr_connector)
+
+    @defer.inlineCallbacks
+    def test_throwing_sqs_connector_dlr_level2(self):
+        with patch('jasmin.protocols.sqs.service.SQSService.sendMessage') as send_message:
+            dlr_level = 2
+            dlr_connector = 'test_cid'
+            msgid = 'anything'
+            message_status = 'DELIVRD'
+            self.publishDLRContentForSQS(message_status, msgid, dlr_level, dlr_connector, id_smsc='abc', sub='3',
+                                            dlvrd='3', subdate='anydate', donedate='anydate', err='', text='Any text')
+
+            yield waitFor(1)
+
+            # No message retries must be made since ACK was received
+            self.assertEqual(send_message.call_count, 1)
+            callArgs = json.loads(send_message.call_args_list[0][0][0])
+            self.assertEqual(callArgs['message_status'], message_status)
+            self.assertEqual(callArgs['id'], msgid)
+            self.assertEqual(callArgs['level'], dlr_level)
+            self.assertEqual(callArgs['id_smsc'], 'abc')
+            self.assertEqual(callArgs['sub'], '3')
+            self.assertEqual(callArgs['dlvrd'], '3')
+            self.assertEqual(callArgs['subdate'], 'anydate')
+            self.assertEqual(callArgs['donedate'], 'anydate')
+            self.assertEqual(callArgs['err'], '')
+            self.assertEqual(callArgs['text'], 'Any text')
+            self.assertEqual(callArgs['connector'], dlr_connector)
 
 class SMPPDLRThrowerTestCases(RouterPBProxy, SMPPClientTestCases, SubmitSmTestCaseTools):
     @defer.inlineCallbacks
